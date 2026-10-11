@@ -37,24 +37,27 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: test-build-windows-x64
+          cache-on-failure: true
+      # (failures are also reported as one annotation, readable through the API without the logs)
       - name: Keyframe lane tests
-        shell: pwsh
+        shell: bash
         run: |
-          cargo test --locked -p filmcraft-ui-egui --lib effect_controls
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked -p filmcraft-ui-egui --test keyframe_zoom_ui --test keyframes_ui
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          report() { msg=$(grep -E "^(error|warning: unused)|panicked|assertion|left:|right:|FAILED|^---- |^failures:|test result" -A4 "$1" | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=$2::$msg"; }
+          cargo test --locked -p filmcraft-ui-egui --lib effect_controls 2>&1 | tee lib.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report lib.log "lib tests"; exit $rc; fi
+          cargo test --locked -p filmcraft-ui-egui --test keyframe_zoom_ui --test keyframes_ui 2>&1 | tee ui.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report ui.log "ui tests"; exit $rc; fi
       - name: Build
-        shell: pwsh
+        shell: bash
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
           FILMCRAFT_REQUIRE_WINRES: "1"
         run: |
-          cargo build --release --locked -p filmcraft -p filmcraft-cli --target x86_64-pc-windows-msvc
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\x86_64-pc-windows-msvc\release\filmcraft.exe, target\x86_64-pc-windows-msvc\release\filmcraft-cli.exe dist\
+          cargo build --release --locked -p filmcraft -p filmcraft-cli --target x86_64-pc-windows-msvc 2>&1 | tee build.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then msg=$(grep -E "^error" -A6 build.log | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=build::$msg"; exit $rc; fi
+          mkdir -p dist
+          cp target/x86_64-pc-windows-msvc/release/filmcraft.exe target/x86_64-pc-windows-msvc/release/filmcraft-cli.exe dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: filmcraft-windows-x64-${{ github.sha }}
