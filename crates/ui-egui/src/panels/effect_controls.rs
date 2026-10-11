@@ -134,11 +134,21 @@ fn zoom_scroller(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: Rect, view: &
     app.auto.add("effectControls.zoom.end", right, "zoom end");
     // a double-click, also told by two clicks in a row (its own count, so it works whatever
     // decides the click count)
-    let twice = |resp: &egui::Response, key: &str| -> bool {
+    // (a press and release on the thumb that hardly moved counts as a click even when egui began
+    // a drag for it: the thumb senses both)
+    let moved_id = id.with("thumb-moved");
+    if body.drag_started() {
+        ui.data_mut(|d| d.insert_temp(moved_id, 0.0f32));
+    } else if body.dragged() {
+        let m: f32 = ui.data(|d| d.get_temp(moved_id)).unwrap_or(0.0);
+        ui.data_mut(|d| d.insert_temp(moved_id, m + body.drag_delta().length()));
+    }
+    let thumb_tap = body.drag_stopped() && ui.data(|d| d.get_temp::<f32>(moved_id)).unwrap_or(f32::MAX) < 3.0;
+    let twice = |resp: &egui::Response, key: &str, tap: bool| -> bool {
         if resp.double_clicked() {
             return true;
         }
-        if !resp.clicked() {
+        if !resp.clicked() && !tap {
             return false;
         }
         let now = ui.input(|i| i.time);
@@ -147,7 +157,7 @@ fn zoom_scroller(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: Rect, view: &
         ui.data_mut(|d| d.insert_temp(k, now));
         last.is_some_and(|l| (0.0..0.5).contains(&(now - l)))
     };
-    let (body_twice, track_twice) = (twice(&body, "thumb"), twice(&tresp, "track"));
+    let (body_twice, track_twice) = (twice(&body, "thumb", thumb_tap), twice(&tresp, "track", false));
     // the view changes only when the scroller is used (recomputing it every frame would drift)
     let (mut s, mut e) = (start, end);
     let mut changed = true;
