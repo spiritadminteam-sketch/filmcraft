@@ -140,8 +140,9 @@ fn zoom_scroller(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: Rect, view: &
     if body.drag_started() {
         ui.data_mut(|d| d.insert_temp(moved_id, 0.0f32));
     } else if body.dragged() {
-        let m: f32 = ui.data(|d| d.get_temp(moved_id)).unwrap_or(0.0);
-        ui.data_mut(|d| d.insert_temp(moved_id, m + body.drag_delta().length()));
+        // (read the delta first: it locks the context, which `data_mut` holds)
+        let m: f32 = ui.data(|d| d.get_temp(moved_id)).unwrap_or(0.0) + body.drag_delta().length();
+        ui.data_mut(|d| d.insert_temp(moved_id, m));
     }
     let thumb_tap = body.drag_stopped() && ui.data(|d| d.get_temp::<f32>(moved_id)).unwrap_or(f32::MAX) < 3.0;
     let twice = |resp: &egui::Response, key: &str, tap: bool| -> bool {

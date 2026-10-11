@@ -164,8 +164,8 @@ fn zoom_scroller_end_zooms_and_hides_keyframes_out_of_view() {
     d.frames(4);
     let after = d.view();
     assert!(after.1 > before.1, "a click on the track scrolls: {before:?} -> {after:?}; track {track:?} thumb {thumb:?}; elements {elements}");
-    // double-click the thumb: the whole clip again
-    d.ok("ui.click", json!({"id": "effectControls.zoom.thumb", "count": 2}));
+    // double-click the scroller: the whole clip again
+    d.ok("ui.click", json!({"id": "effectControls.zoom", "fx": 0.05, "count": 2}));
     d.frames(4);
     assert_eq!(d.view(), (1.0, 0.0), "double-click shows the whole clip");
 }
