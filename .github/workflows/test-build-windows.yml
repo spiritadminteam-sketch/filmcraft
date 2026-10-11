@@ -1,6 +1,6 @@
 # Test build for this fork: runs the keyframe lane tests, then builds unsigned Windows x64
 # binaries (filmcraft.exe + filmcraft-cli.exe) the same way packaging/windows/package.ps1 does,
-# and uploads them as an artifact. No signing, no release.
+# and uploads them as an artifact and as a pre-release ("test-build-<sha>"). No signing.
 name: Test build (Windows x64)
 
 on:
@@ -9,7 +9,8 @@ on:
     branches: [ec-keyframe-zoom]
 
 permissions:
-  contents: read
+  # (write: the build is published as a pre-release, since artifacts need a signed-in download)
+  contents: write
 
 concurrency:
   group: test-build-${{ github.ref }}
@@ -65,3 +66,12 @@ jobs:
           name: filmcraft-windows-x64-${{ github.sha }}
           path: dist/*
           if-no-files-found: error
+      - name: Publish as a pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="test-build-${GITHUB_SHA::7}"
+          7z a filmcraft-test-windows-x64.zip ./dist/filmcraft.exe ./dist/filmcraft-cli.exe
+          gh release create "$tag" filmcraft-test-windows-x64.zip --prerelease --target "$GITHUB_SHA" \
+            --title "Test build $tag" --notes "Unsigned test build of ${GITHUB_REF_NAME} (${GITHUB_SHA})." -R "$GITHUB_REPOSITORY"
