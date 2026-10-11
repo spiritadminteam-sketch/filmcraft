@@ -132,12 +132,30 @@ fn zoom_scroller(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: Rect, view: &
     app.auto.add("effectControls.zoom.thumb", thumb, "visible stretch");
     app.auto.add("effectControls.zoom.start", left, "zoom start");
     app.auto.add("effectControls.zoom.end", right, "zoom end");
+    // a double-click, also told by two clicks in a row (its own count, so it works whatever
+    // decides the click count)
+    let twice = |resp: &egui::Response, key: &str| -> bool {
+        if resp.double_clicked() {
+            return true;
+        }
+        if !resp.clicked() {
+            return false;
+        }
+        let now = ui.input(|i| i.time);
+        let k = id.with(key).with("last-click");
+        let last: Option<f64> = ui.data(|d| d.get_temp(k));
+        ui.data_mut(|d| d.insert_temp(k, now));
+        last.is_some_and(|l| (0.0..0.5).contains(&(now - l)))
+    };
+    let (body_twice, track_twice) = (twice(&body, "thumb"), twice(&tresp, "track"));
+    // the view changes only when the scroller is used (recomputing it every frame would drift)
     let (mut s, mut e) = (start, end);
+    let mut changed = true;
     if lresp.dragged() {
         s = (s + lresp.drag_delta().x / w).clamp(0.0, e - min_span);
     } else if rresp.dragged() {
         e = (e + rresp.drag_delta().x / w).clamp(s + min_span, 1.0);
-    } else if body.double_clicked() || tresp.double_clicked() {
+    } else if body_twice || track_twice {
         (s, e) = (0.0, 1.0);
     } else if body.dragged() {
         let d = (body.drag_delta().x / w).clamp(-s, 1.0 - e);
@@ -147,9 +165,13 @@ fn zoom_scroller(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: Rect, view: &
     {
         let c = (p.x - track.min.x) / w;
         (s, e) = (c - span / 2.0, c + span / 2.0);
+    } else {
+        changed = false;
     }
-    let span = (e - s).max(min_span);
-    (view.zoom, view.start) = clamp_view(1.0 / span, s, max_zoom);
+    if changed {
+        let zoom = if lresp.dragged() || rresp.dragged() || body_twice || track_twice { 1.0 / (e - s).max(min_span) } else { zoom };
+        (view.zoom, view.start) = clamp_view(zoom, s, max_zoom);
+    }
     // paint: a rounded track, the thumb, and round grips at its ends
     let active = body.dragged() || lresp.dragged() || rresp.dragged();
     ui.painter().rect_filled(track, track.height() / 2.0, t.field_bg);
