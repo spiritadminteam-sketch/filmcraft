@@ -42,6 +42,7 @@ jobs:
       - name: Keyframe lane tests
         shell: bash
         run: |
+          set +e +o pipefail
           report() { msg=$(grep -E "^(error|warning: unused)|panicked|assertion|left:|right:|FAILED|^---- |^failures:|test result" -A4 "$1" | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=$2::$msg"; }
           cargo test --locked -p filmcraft-ui-egui --lib effect_controls 2>&1 | tee lib.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report lib.log "lib tests"; exit $rc; fi
@@ -54,6 +55,7 @@ jobs:
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
           FILMCRAFT_REQUIRE_WINRES: "1"
         run: |
+          set +e +o pipefail
           cargo build --release --locked -p filmcraft -p filmcraft-cli --target x86_64-pc-windows-msvc 2>&1 | tee build.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then msg=$(grep -E "^error" -A6 build.log | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=build::$msg"; exit $rc; fi
           mkdir -p dist
