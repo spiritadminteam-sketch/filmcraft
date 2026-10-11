@@ -156,6 +156,14 @@ fn zoom_scroller_end_zooms_and_hides_keyframes_out_of_view() {
     assert!(d.find(&late).is_none(), "the keyframe at 90 % is out of view, so not in the lane");
     d.shot("ec_zoom_2_zoomed_in");
 
+    // a click on the track (right of the thumb) centres the view there
+    let before = d.view();
+    let thumb = d.rect("effectControls.zoom.thumb");
+    let elements = d.ok("ui.elements", json!({"prefix": "effectControls"}));
+    d.ok("ui.click", json!({"id": "effectControls.zoom", "fx": 0.8}));
+    d.frames(4);
+    let after = d.view();
+    assert!(after.1 > before.1, "a click on the track scrolls: {before:?} -> {after:?}; track {track:?} thumb {thumb:?}; elements {elements}");
     // double-click the thumb: the whole clip again
     d.ok("ui.click", json!({"id": "effectControls.zoom.thumb", "count": 2}));
     d.frames(4);
