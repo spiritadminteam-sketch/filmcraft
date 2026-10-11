@@ -112,83 +112,88 @@ fn lane_wheel(ui: &egui::Ui, lane: Rect, view: &mut crate::state::KeyframeLaneVi
 /// Premiere's zoom scroller under the keyframe lane: the thumb is the stretch of the clip the lane
 /// shows. Drag it to scroll, drag either end to zoom, click the track to centre the view there,
 /// double-click to see the whole clip again. Returns whether it is being dragged.
+///
+/// One widget takes the whole track; where the button went down decides what a drag moves (the
+/// thumb's ends, the thumb, or — outside it — the view, centred on the pointer).
 fn zoom_scroller(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: Rect, view: &mut crate::state::KeyframeLaneView, max_zoom: f32) -> bool {
+    // what a drag on the scroller moves
+    const START: u8 = 1;
+    const END: u8 = 2;
+    const THUMB: u8 = 3;
+    const PAGE: u8 = 4;
     let t = app.tokens;
     let w = track.width().max(1.0);
     let (zoom, start) = clamp_view(view.zoom, view.start, max_zoom);
     let (span, min_span) = (1.0 / zoom, 1.0 / max_zoom.max(1.0));
     let end = start + span;
     let thumb = Rect::from_min_max(pos2(track.min.x + start * w, track.min.y), pos2(track.min.x + end * w, track.max.y));
+    // the ends' grab width: a quarter of a narrow thumb, so its middle still scrolls
+    let grip = (thumb.width() / 4.0).clamp(2.0, 6.0);
+    let part = |x: f32| -> u8 {
+        if (x - thumb.min.x).abs() <= grip {
+            START
+        } else if (x - thumb.max.x).abs() <= grip {
+            END
+        } else if x > thumb.min.x && x < thumb.max.x {
+            THUMB
+        } else {
+            PAGE
+        }
+    };
     let id = egui::Id::new("ec-zoom-scroller");
-    // the track first, so the thumb and its ends (registered after it) get the pointer
-    let tresp = ui.interact(track, id.with("track"), Sense::click());
-    let body = ui.interact(thumb, id.with("thumb"), Sense::click_and_drag());
-    let grab = 7.0f32.min(thumb.width() / 3.0).max(3.0);
-    let left = Rect::from_min_max(pos2(thumb.min.x - 3.0, track.min.y), pos2(thumb.min.x + grab, track.max.y));
-    let right = Rect::from_min_max(pos2(thumb.max.x - grab, track.min.y), pos2(thumb.max.x + 3.0, track.max.y));
-    let lresp = ui.interact(left, id.with("start"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-    let rresp = ui.interact(right, id.with("end"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    let resp = ui.interact(track, id, Sense::click_and_drag());
+    if let Some(p) = resp.hover_pos()
+        && matches!(part(p.x), START | END)
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
     app.auto.add("effectControls.zoom", track, "keyframe zoom scroller");
     app.auto.add("effectControls.zoom.thumb", thumb, "visible stretch");
-    app.auto.add("effectControls.zoom.start", left, "zoom start");
-    app.auto.add("effectControls.zoom.end", right, "zoom end");
-    // a double-click, also told by two clicks in a row (its own count, so it works whatever
-    // decides the click count)
-    // (a press and release on the thumb that hardly moved counts as a click even when egui began
-    // a drag for it: the thumb senses both)
-    let moved_id = id.with("thumb-moved");
-    if body.drag_started() {
-        ui.data_mut(|d| d.insert_temp(moved_id, 0.0f32));
-    } else if body.dragged() {
-        // (read the delta first: it locks the context, which `data_mut` holds)
-        let m: f32 = ui.data(|d| d.get_temp(moved_id)).unwrap_or(0.0) + body.drag_delta().length();
-        ui.data_mut(|d| d.insert_temp(moved_id, m));
+    app.auto.add("effectControls.zoom.start", Rect::from_center_size(pos2(thumb.min.x, track.center().y), vec2(grip * 2.0, track.height())), "zoom start");
+    app.auto.add("effectControls.zoom.end", Rect::from_center_size(pos2(thumb.max.x, track.center().y), vec2(grip * 2.0, track.height())), "zoom end");
+    // what the drag holds, decided where the button went down
+    let held_id = id.with("held");
+    if resp.drag_started() {
+        let x = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()).map_or(thumb.center().x, |p| p.x);
+        let h = part(x);
+        ui.data_mut(|d| d.insert_temp(held_id, h));
     }
-    let thumb_tap = body.drag_stopped() && ui.data(|d| d.get_temp::<f32>(moved_id)).unwrap_or(f32::MAX) < 3.0;
-    let twice = |resp: &egui::Response, key: &str, tap: bool| -> bool {
-        if resp.double_clicked() {
-            return true;
-        }
-        if !resp.clicked() && !tap {
-            return false;
-        }
-        let now = ui.input(|i| i.time);
-        let k = id.with(key).with("last-click");
-        let last: Option<f64> = ui.data(|d| d.get_temp(k));
-        ui.data_mut(|d| d.insert_temp(k, now));
-        last.is_some_and(|l| (0.0..0.5).contains(&(now - l)))
-    };
-    let (body_twice, track_twice) = (twice(&body, "thumb", thumb_tap), twice(&tresp, "track", false));
-    // the view changes only when the scroller is used (recomputing it every frame would drift)
+    let held: u8 = if resp.dragged() || resp.drag_started() { ui.data(|d| d.get_temp(held_id)).unwrap_or(THUMB) } else { 0 };
+    if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<u8>(held_id));
+    }
+    let dx = resp.drag_delta().x / w;
+    let pointer = resp.interact_pointer_pos().map(|p| (p.x - track.min.x) / w);
     let (mut s, mut e) = (start, end);
-    let mut changed = true;
-    if lresp.dragged() {
-        s = (s + lresp.drag_delta().x / w).clamp(0.0, e - min_span);
-    } else if rresp.dragged() {
-        e = (e + rresp.drag_delta().x / w).clamp(s + min_span, 1.0);
-    } else if body_twice || track_twice {
-        (s, e) = (0.0, 1.0);
-    } else if body.dragged() {
-        let d = (body.drag_delta().x / w).clamp(-s, 1.0 - e);
-        (s, e) = (s + d, e + d);
-    } else if tresp.clicked()
-        && let Some(p) = tresp.interact_pointer_pos()
-    {
-        let c = (p.x - track.min.x) / w;
-        (s, e) = (c - span / 2.0, c + span / 2.0);
+    let mut new_zoom = None;
+    if resp.double_clicked() {
+        (s, new_zoom) = (0.0, Some(1.0));
+    } else if held == START {
+        s = (s + dx).clamp(0.0, e - min_span);
+        new_zoom = Some(1.0 / (e - s).max(min_span));
+    } else if held == END {
+        e = (e + dx).clamp(s + min_span, 1.0);
+        new_zoom = Some(1.0 / (e - s).max(min_span));
+    } else if held == THUMB {
+        s += dx.clamp(-s, 1.0 - e);
+    } else if held == PAGE || (resp.clicked() && pointer.is_some_and(|c| part(track.min.x + c * w) == PAGE)) {
+        // outside the thumb: the view centres on the pointer (and follows it while dragged)
+        if let Some(c) = pointer {
+            s = c - span / 2.0;
+        }
     } else {
-        changed = false;
+        // (untouched: recomputing the view every frame would drift)
+        s = f32::NAN;
     }
-    if changed {
-        let zoom = if lresp.dragged() || rresp.dragged() || body_twice || track_twice { 1.0 / (e - s).max(min_span) } else { zoom };
-        (view.zoom, view.start) = clamp_view(zoom, s, max_zoom);
+    if !s.is_nan() {
+        (view.zoom, view.start) = clamp_view(new_zoom.unwrap_or(zoom), s, max_zoom);
     }
     // paint: a rounded track, the thumb, and round grips at its ends
-    let active = body.dragged() || lresp.dragged() || rresp.dragged();
+    let active = held != 0;
     ui.painter().rect_filled(track, track.height() / 2.0, t.field_bg);
     let thumb =
         Rect::from_min_max(pos2(track.min.x + view.start * w, track.min.y + 1.0), pos2(track.min.x + (view.start + 1.0 / view.zoom) * w, track.max.y - 1.0));
-    let hot = active || body.hovered() || lresp.hovered() || rresp.hovered();
+    let hot = active || resp.hover_pos().is_some_and(|p| thumb.expand(grip).contains(p));
     ui.painter().rect_filled(thumb, thumb.height() / 2.0, if hot { t.text_dim } else { t.separator });
     for x in [thumb.min.x + thumb.height() / 2.0, thumb.max.x - thumb.height() / 2.0] {
         ui.painter().circle_filled(pos2(x, thumb.center().y), (thumb.height() / 2.0 - 1.5).max(1.5), if hot { t.text } else { t.text_dim });
