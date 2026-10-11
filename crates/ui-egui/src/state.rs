@@ -418,6 +418,23 @@ pub struct KeyframeRef {
     pub time: filmcraft_time::Tick,
 }
 
+/// Effect Controls' keyframe lane view: the stretch of the selected clip the lane shows. `zoom` 1
+/// shows the whole clip (the default); `start` is where the view begins, as a fraction of the
+/// clip. The zoom scroller under the lane and Option/Alt + wheel set it; selecting another clip
+/// resets it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct KeyframeLaneView {
+    pub clip: u64,
+    pub zoom: f32,
+    pub start: f32,
+}
+
+impl Default for KeyframeLaneView {
+    fn default() -> Self {
+        Self { clip: 0, zoom: 1.0, start: 0.0 }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiState {
     #[serde(default)]
@@ -465,6 +482,17 @@ pub struct UiState {
     /// Effect Controls: the selected keyframes, highlighted in the keyframe lane (a click selects one).
     #[serde(default)]
     pub keyframe_selection: Vec<KeyframeRef>,
+    /// Effect Controls: the keyframe lane's zoom and scroll.
+    #[serde(default)]
+    pub keyframe_view: KeyframeLaneView,
+    /// Effect Controls: the visible keyframe lane's left and right edges this frame (the rows only
+    /// draw and hit keyframes there when the lane is zoomed in). Never saved.
+    #[serde(skip)]
+    pub keyframe_lane_visible: Option<(f32, f32)>,
+    /// Effect Controls: the playhead the lane last showed, so the view follows it when it moves
+    /// out of sight. Never saved.
+    #[serde(skip)]
+    pub keyframe_view_playhead: Option<filmcraft_time::Tick>,
     /// Essential Sound sub-tab: "Edit" or "Browse".
     #[serde(default)]
     pub essential_sound_tab: String,
@@ -965,6 +993,9 @@ impl Default for UiState {
             status: String::new(),
             eyedropper: None,
             keyframe_selection: Vec::new(),
+            keyframe_view: KeyframeLaneView::default(),
+            keyframe_lane_visible: None,
+            keyframe_view_playhead: None,
             essential_sound_tab: "Edit".into(),
             tts: Default::default(),
             export: Default::default(),

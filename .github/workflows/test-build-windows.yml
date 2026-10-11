@@ -1,0 +1,62 @@
+# Test build for this fork: runs the keyframe lane tests, then builds unsigned Windows x64
+# binaries (filmcraft.exe + filmcraft-cli.exe) the same way packaging/windows/package.ps1 does,
+# and uploads them as an artifact. No signing, no release.
+name: Test build (Windows x64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ec-keyframe-zoom]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  FILMCRAFT_BUILD_SHA: ${{ github.sha }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-fonts
+          ref: abb83316d96aa59c1cf64784289e378fe9fa5695
+          path: craft-fonts
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: test-build-windows-x64
+      - name: Keyframe lane tests
+        shell: pwsh
+        run: |
+          cargo test --locked -p filmcraft-ui-egui --lib effect_controls
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p filmcraft-ui-egui --test keyframe_zoom_ui --test keyframes_ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build
+        shell: pwsh
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+          FILMCRAFT_REQUIRE_WINRES: "1"
+        run: |
+          cargo build --release --locked -p filmcraft -p filmcraft-cli --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\filmcraft.exe, target\x86_64-pc-windows-msvc\release\filmcraft-cli.exe dist\
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: filmcraft-windows-x64-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
