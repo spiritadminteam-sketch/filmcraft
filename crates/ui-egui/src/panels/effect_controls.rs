@@ -164,9 +164,20 @@ fn zoom_scroller(app: &mut FilmcraftApp, ui: &mut egui::Ui, track: Rect, view: &
     }
     let dx = resp.drag_delta().x / w;
     let pointer = resp.interact_pointer_pos().map(|p| (p.x - track.min.x) / w);
+    // a double-click, also told by two clicks in a row (counted here too: the first click of a
+    // double-click on the track moves the thumb under the pointer)
+    let twice = resp.double_clicked() || {
+        resp.clicked() && {
+            let now = ui.input(|i| i.time);
+            let k = id.with("last-click");
+            let last: Option<f64> = ui.data(|d| d.get_temp(k));
+            ui.data_mut(|d| d.insert_temp(k, now));
+            last.is_some_and(|l| (0.0..0.5).contains(&(now - l)))
+        }
+    };
     let (mut s, mut e) = (start, end);
     let mut new_zoom = None;
-    if resp.double_clicked() {
+    if twice {
         (s, new_zoom) = (0.0, Some(1.0));
     } else if held == START {
         s = (s + dx).clamp(0.0, e - min_span);
