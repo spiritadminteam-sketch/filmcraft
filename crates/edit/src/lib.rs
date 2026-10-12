@@ -176,13 +176,20 @@ pub fn track_range_empty(track: &Track, range: TimeRange) -> bool {
     !track.items.iter().any(|i| i.range().overlaps(&range))
 }
 
-/// Drop transitions whose clips no longer exist or are no longer adjacent to them.
+/// Drop transitions whose clips no longer exist or are no longer adjacent to them: a transition
+/// between two clips needs the outgoing clip to end where the incoming one starts, at a cut inside
+/// the transition; a fade needs its clip's edge inside it. Without the adjacency check a cut
+/// opened by a trim or a move left the old transition floating in the gap.
 pub fn remove_orphan_transitions(track: &mut Track) {
     let ids: HashMap<ClipId, (Tick, Tick)> = track.items.iter().map(|i| (i.id, (i.start, i.end()))).collect();
     track.transitions.retain(|tr| {
-        let from_ok = tr.from.is_none_or(|f| ids.contains_key(&f));
-        let to_ok = tr.to.is_none_or(|t| ids.contains_key(&t));
-        from_ok && to_ok && (tr.from.is_some() || tr.to.is_some())
+        let within = |t: Tick| tr.start <= t && t <= tr.end();
+        match (tr.from.map(|f| ids.get(&f)), tr.to.map(|t| ids.get(&t))) {
+            (Some(Some(&(_, out))), Some(Some(&(inn, _)))) => out == inn && within(inn),
+            (Some(Some(&(_, out))), None) => within(out),
+            (None, Some(Some(&(inn, _)))) => within(inn),
+            _ => false,
+        }
     });
 }
 
@@ -526,6 +533,10 @@ pub fn move_items(seq: &mut Sequence, moves: &[(ClipId, TrackId, Tick)], insert_
             t.sort();
         }
     }
+    // a clip moved away from a neighbour leaves no transition behind in the gap
+    for t in work.all_tracks_mut().filter(|t| !t.locked) {
+        remove_orphan_transitions(t);
+    }
     *seq = work;
     Ok(())
 }
@@ -746,6 +757,8 @@ pub fn trim(seq: &mut Sequence, clip: ClipId, edge: Edge, mode: TrimMode, delta:
         transitions_follow_cuts(seq, &mut work);
     } else if let Ok(track) = track_mut(&mut work, tid) {
         fades_follow_edges(track, clip);
+        // a cut opened by the trim leaves no transition behind in the gap
+        remove_orphan_transitions(track);
     }
     work.check().map_err(EditError::Other)?;
     *seq = work;

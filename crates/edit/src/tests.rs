@@ -525,6 +525,42 @@ fn transitions_travel_with_moved_clips() {
     fx.seq.check().unwrap();
 }
 
+/// A cut opened by a regular trim leaves no crossfade floating in the gap: the transition goes
+/// with the cut, as in Premiere. A fade on the trimmed clip's other edge stays.
+#[test]
+fn a_trim_that_opens_a_cut_drops_its_transition() {
+    // A1: a [0,10), b [10,20); a→b crossfade over the cut, b fading out
+    let mut fx = Fx::new();
+    let a1 = fx.a(0);
+    let a = fx.put(a1, 0, 10, 10);
+    let b = fx.put(a1, 10, 10, 10);
+    let tr = |id, start, from, to| Transition {
+        id: TransitionId(id),
+        effect: filmcraft_project::find_effect("cross_dissolve").unwrap().instance(),
+        start: f(start),
+        duration: f(4),
+        from,
+        to,
+        align: Default::default(),
+        reverse: false,
+    };
+    fx.seq.track_mut(a1).unwrap().transitions = vec![tr(1, 8, Some(a), Some(b)), tr(2, 16, Some(b), None)];
+    let ids = |fx: &Fx| fx.seq.track(a1).unwrap().transitions.iter().map(|t| t.id.0).collect::<Vec<_>>();
+    let mut n = fx.next;
+    // trimming b's head back opens a gap at the cut
+    trim(&mut fx.seq, b, Edge::In, TrimMode::Regular, f(3), &mut Fx::ctx(&mut n)).unwrap();
+    assert_eq!(ids(&fx), vec![2], "the crossfade went with the cut; b's fade out stayed");
+    // and a lone transition whose clips no longer meet is dropped by the clean-up too
+    let mut fx = Fx::new();
+    assert_eq!(fx.a(0), a1, "the same fixture");
+    let a = fx.put(a1, 0, 10, 10);
+    let b = fx.put(a1, 14, 10, 10);
+    fx.seq.track_mut(a1).unwrap().transitions = vec![tr(1, 8, Some(a), Some(b))];
+    remove_orphan_transitions(fx.seq.track_mut(a1).unwrap());
+    assert!(ids(&fx).is_empty(), "no transition between clips that don't meet");
+    fx.seq.check().unwrap();
+}
+
 #[test]
 fn rate_stretch_and_speed() {
     let mut fx = Fx::new();
