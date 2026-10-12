@@ -192,8 +192,18 @@ impl Layout {
     pub fn tick_at(&self, x: f32) -> Tick {
         Tick::from_seconds_f64(self.scroll + (x - self.content.min.x) as f64 / self.pps)
     }
+    /// The track row under `y`. A row scrolled out of its area (a video track pushed below the
+    /// divider, an audio track pushed above it) is hidden there and not under the pointer: without
+    /// this, a press on an audio track hit the hidden video track behind it (V1 under A1), so a
+    /// click on an audio transition selected the video clip instead.
     pub fn row_at(&self, y: f32) -> Option<&Row> {
-        self.rows.iter().find(|r| r.rect.min.y <= y && y < r.rect.max.y)
+        self.rows.iter().find(|r| {
+            let shown = match r.kind {
+                TrackKind::Video => y < self.split_y,
+                TrackKind::Audio => y >= self.split_y + DIVIDER_H,
+            };
+            shown && r.rect.min.y <= y && y < r.rect.max.y
+        })
     }
 }
 
@@ -2955,5 +2965,33 @@ mod new_track_tests {
         for y in [160.0, 202.0, 230.0, 480.0] {
             assert_eq!(at(y), None, "y = {y}");
         }
+    }
+
+    /// A video track scrolled below the divider (V1 under A1) is not hit there: the audio track
+    /// shown there is. It used to win, so clicks on A1 (and its transitions) went to V1.
+    #[test]
+    fn hidden_rows_are_not_hit() {
+        let mut p = Project::new("t");
+        let id = p.new_sequence("s", SequenceSettings::default(), 1, 1, None);
+        let seq = p.sequence(id).cloned().expect("sequence");
+        let row = |kind, track: &filmcraft_project::Track, y0: f32| Row {
+            track: track.id,
+            kind,
+            index: 0,
+            rect: Rect::from_min_max(pos2(0.0, y0), pos2(800.0, y0 + 50.0)),
+            lane: false,
+        };
+        // V1 scrolled down to 190..240, across the divider (200..205) and over A1 (205..255)
+        let layout = Layout {
+            content: Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 500.0)),
+            ruler: Rect::from_min_max(pos2(0.0, -20.0), pos2(800.0, 0.0)),
+            rows: vec![row(TrackKind::Video, &seq.video_tracks[0], 190.0), row(TrackKind::Audio, &seq.audio_tracks[0], 205.0)],
+            pps: 100.0,
+            scroll: 0.0,
+            split_y: 200.0,
+        };
+        assert_eq!(layout.row_at(195.0).map(|r| r.track), Some(seq.video_tracks[0].id), "V1 where it shows");
+        assert!(layout.row_at(202.0).is_none(), "the divider is no track");
+        assert_eq!(layout.row_at(220.0).map(|r| r.track), Some(seq.audio_tracks[0].id), "A1, not the hidden V1 behind it");
     }
 }

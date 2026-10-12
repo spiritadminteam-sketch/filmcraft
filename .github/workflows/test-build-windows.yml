@@ -45,9 +45,9 @@ jobs:
         run: |
           set +e +o pipefail
           report() { msg=$(grep -E "^(error|warning: unused)|panicked|assertion|left:|right:|FAILED|^---- |^failures:|test result" -A4 "$1" | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=$2::$msg"; }
-          cargo test --locked -p filmcraft-ui-egui --lib -- effect_controls motion_overlay 2>&1 | tee lib.log; rc=${PIPESTATUS[0]}
+          cargo test --locked -p filmcraft-ui-egui --lib -- effect_controls motion_overlay timeline 2>&1 | tee lib.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report lib.log "lib tests"; exit $rc; fi
-          cargo test --locked -p filmcraft-ui-egui --test keyframe_zoom_ui --test keyframes_ui --test motion_overlay_ui --test keyframe_select_ui --test deselect_ui --test graphics_ui --test graphics_handles_ui --test masks_ui 2>&1 | tee ui.log; rc=${PIPESTATUS[0]}
+          cargo test --locked -p filmcraft-ui-egui --test keyframe_zoom_ui --test keyframes_ui --test motion_overlay_ui --test keyframe_select_ui --test transitions_ui --test timeline_gap_ui --test deselect_ui --test graphics_ui --test graphics_handles_ui --test masks_ui 2>&1 | tee ui.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report ui.log "ui tests"; exit $rc; fi
       - name: Build
         shell: bash
