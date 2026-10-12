@@ -493,7 +493,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let scroll_out = egui::ScrollArea::vertical()
         .id_salt("ec-scroll")
         .auto_shrink([false, false])
-        .scroll_source(egui::scroll_area::ScrollSource { drag: false, ..egui::scroll_area::ScrollSource::ALL })
+        .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, ..egui::scroll_area::ScrollSource::MOUSE_WHEEL })
         .show(&mut bui, |bui| {
             for (clip, it, kind) in &clips {
                 let clip = *clip;
