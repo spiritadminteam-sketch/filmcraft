@@ -64,6 +64,7 @@ pub const COMMANDS: &[UiCommand] = &[
     uic!("window.prevPanel", "Select Previous Panel", [], Some("Ctrl+Shift+,")),
     uic!("window.toggleMonitorFocus", "Toggle Source/Program Monitor Focus", [], None),
     uic!("window.openSearch", "Open Search", [], Some("Cmd+Shift+F")),
+    uic!("window.commandPalette", "Command Palette…", ["Window"], None),
     uic!("panel.selectFindBox", "Select Find Box", [], Some("Shift+F")),
     uic!("window.workspace.learning", "Learning", ["Window", "Workspaces"], Some("Alt+Shift+7")),
     uic!("window.workspace.review", "Review", ["Window", "Workspaces"], Some("Alt+Shift+8")),
@@ -167,6 +168,10 @@ pub fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Val
             Ok(focus_find_box(app, ctx))
         }
         "panel.selectFindBox" => Ok(focus_find_box(app, ctx)),
+        "window.commandPalette" => {
+            crate::panels::command_palette::toggle(app);
+            Ok(json!({"open": app.ui.palette.is_some()}))
+        }
         "window.workspace.learning" | "window.workspace.review" => {
             let name = if id.ends_with("learning") { "Learning" } else { "Review" };
             app.set_workspace(name);

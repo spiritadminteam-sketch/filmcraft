@@ -593,6 +593,12 @@ pub struct UiState {
     /// Open Marker dialog (double-click a marker, or Edit Marker… in its menu).
     #[serde(default)]
     pub marker_dialog: Option<MarkerDialog>,
+    /// The Command Palette, while open (Window ▸ Command Palette…).
+    #[serde(default)]
+    pub palette: Option<crate::panels::command_palette::PaletteState>,
+    /// What the Command Palette ran last, newest first (they rank first next time).
+    #[serde(default)]
+    pub palette_recent: Vec<String>,
     /// Open Window ▸ Workspaces dialog.
     #[serde(default)]
     pub workspace_dialog: Option<WorkspaceDialog>,
@@ -1044,6 +1050,8 @@ impl Default for UiState {
             guide_dialog: None,
             text_props_dialog: None,
             marker_dialog: None,
+            palette: None,
+            palette_recent: Vec::new(),
             workspace_dialog: None,
             clip_dialog: None,
             extras: Default::default(),
