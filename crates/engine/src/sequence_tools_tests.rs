@@ -607,3 +607,30 @@ fn place_on_new_tracks_adds_them_in_one_undo_step() {
     assert_eq!(*s.active_sequence().unwrap(), before);
     assert_eq!(s.history.undo.len(), undo);
 }
+
+/// A marker moves (`markers.edit` with `time`, onto a frame, in time order) and is deleted by id
+/// (`markers.remove`), as dragging it on the ruler and its Delete button do.
+#[test]
+fn markers_move_and_delete_by_id() {
+    let (mut s, _) = fresh();
+    let a = s.execute("markers.add", json!({"frame": 10, "name": "A"})).unwrap()["marker"].as_u64().unwrap();
+    let b = s.execute("markers.add", json!({"frame": 20, "name": "B"})).unwrap()["marker"].as_u64().unwrap();
+    // A past B, at a time off the frame grid: it lands on a frame and the list stays in order
+    let off = f(&s, 30) + Tick(5);
+    s.execute("markers.edit", json!({"marker": a, "time": off.0})).unwrap();
+    let ms: Vec<(u64, Tick)> = s.active_sequence().unwrap().markers.iter().map(|m| (m.id.0, m.start)).collect();
+    assert_eq!(ms, vec![(b, f(&s, 20)), (a, f(&s, 30))]);
+    assert_eq!(s.history.undo.last().map(|u| u.0.as_str()), Some("Move Marker"));
+    // never before the start
+    s.execute("markers.edit", json!({"marker": a, "time": -500})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().markers[0].start, Tick::ZERO);
+    // colour, name, comment in one step
+    s.execute("markers.edit", json!({"marker": a, "color": "Yellow", "name": "Random", "comment": "speaking"})).unwrap();
+    let m = s.active_sequence().unwrap().markers.iter().find(|m| m.id.0 == a).unwrap().clone();
+    assert_eq!((m.color, m.name.as_str(), m.comment.as_str()), (Label::Yellow, "Random", "speaking"));
+    s.execute("markers.remove", json!({"marker": b})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().markers.len(), 1);
+    assert!(s.execute("markers.remove", json!({"marker": b})).is_err(), "already gone");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().markers.len(), 2, "undo brings it back");
+}

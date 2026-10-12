@@ -590,6 +590,9 @@ pub struct UiState {
     /// Open Text Properties dialog (the wrench in the Properties panel's Text section).
     #[serde(default)]
     pub text_props_dialog: Option<TextPropsDialog>,
+    /// Open Marker dialog (double-click a marker, or Edit Marker… in its menu).
+    #[serde(default)]
+    pub marker_dialog: Option<MarkerDialog>,
     /// Open Window ▸ Workspaces dialog.
     #[serde(default)]
     pub workspace_dialog: Option<WorkspaceDialog>,
@@ -930,6 +933,18 @@ impl Default for DeleteTracksDraft {
     }
 }
 
+/// Draft of the Marker dialog of a sequence marker: its name, comments, colour and duration, as
+/// Premiere's Marker dialog edits them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MarkerDialog {
+    pub marker: u64,
+    pub name: String,
+    pub comment: String,
+    /// A label name (`Label::name`).
+    pub color: String,
+    pub duration_frames: i64,
+}
+
 /// Draft of the Text Properties dialog of a text layer: its type (point text, or paragraph text
 /// wrapped in a box) and text styling.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1028,6 +1043,7 @@ impl Default for UiState {
             edit_cameras: None,
             guide_dialog: None,
             text_props_dialog: None,
+            marker_dialog: None,
             workspace_dialog: None,
             clip_dialog: None,
             extras: Default::default(),

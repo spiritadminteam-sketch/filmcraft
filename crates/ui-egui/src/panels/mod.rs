@@ -18,6 +18,7 @@ pub mod import_mode;
 pub mod interchange_export;
 pub mod keyboard;
 pub mod lumetri;
+pub mod marker_edit;
 pub mod masks;
 pub mod media_browser;
 pub mod media_dialogs;

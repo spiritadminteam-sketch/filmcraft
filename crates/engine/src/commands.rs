@@ -2070,7 +2070,7 @@ fn build() -> Vec<CommandSpec> {
             "Edit Marker…",
             [],
             None,
-            r#"{"target":"program|source","marker":id,"name":str?,"comment":str?,"color":label?,"durationFrames":i64?}"#,
+            r#"{"target":"program|source","marker":id,"name":str?,"comment":str?,"color":label?,"durationFrames":i64?,"time":ticks?}"#,
             always,
             |s, p| {
                 if let Some(v) = crate::source_monitor::route(s, "markers.edit", p)? {
@@ -2078,9 +2078,15 @@ fn build() -> Vec<CommandSpec> {
                 }
                 let id = u64_p(p, "marker").map(MarkerId).ok_or_else(|| bad("markers.edit", "need `marker`"))?;
                 let rate = s.sequence_rate();
+                // a new start (dragging it on the ruler), on a frame and not before 0
+                let to = p.get("time").and_then(Value::as_i64).map(|t| rate.snap_nearest(Tick(t).max(Tick::ZERO)));
+                let label = if to.is_some() && p.get("name").is_none() && p.get("comment").is_none() { "Move Marker" } else { "Edit Marker" };
                 let p = p.clone();
-                s.edit_sequence("Edit Marker", |q, _, _| {
+                s.edit_sequence(label, |q, _, _| {
                     let m = q.markers.iter_mut().find(|m| m.id == id).ok_or_else(|| bad("markers.edit", "no such marker"))?;
+                    if let Some(t) = to {
+                        m.start = t;
+                    }
                     if let Some(n) = str_p(&p, "name") {
                         m.name = n.into();
                     }
@@ -2091,13 +2097,29 @@ fn build() -> Vec<CommandSpec> {
                         m.color = c;
                     }
                     if let Some(f) = p.get("durationFrames").and_then(Value::as_i64) {
-                        m.duration = rate.tick_of(f);
+                        m.duration = rate.tick_of(f.clamp(0, 1_000_000_000));
                     }
+                    q.markers.sort_by_key(|m| m.start);
                     Ok(())
                 })?;
                 Ok(Value::Null)
             }
         ),
+        cmd!("markers.remove", "Delete Marker", [], None, r#"{"target":"program|source","marker":id}"#, always, |s, p| {
+            if let Some(v) = crate::source_monitor::route(s, "markers.remove", p)? {
+                return Ok(v);
+            }
+            let id = u64_p(p, "marker").map(MarkerId).ok_or_else(|| bad("markers.remove", "need `marker`"))?;
+            s.edit_sequence("Clear Marker", |q, _, _| {
+                let before = q.markers.len();
+                q.markers.retain(|m| m.id != id);
+                if q.markers.len() == before {
+                    return Err(bad("markers.remove", "no such marker"));
+                }
+                Ok(())
+            })?;
+            Ok(Value::Null)
+        }),
         // ================= Playhead / navigation =================
         cmd!("playhead.set", "Set Playhead", [], None, r#"{"time":ticks|"frame":i64|"seconds":f64|"timecode":str}"#, has_seq, |s, p| {
             let t = time_p(s, p, "").ok_or_else(|| bad("playhead.set", "need time/frame/seconds/timecode"))?;

@@ -58,7 +58,8 @@ pub const MARKER_FILTER: [filmcraft_project::Label; 7] = {
 };
 
 /// Markers panel: a colour filter row (click a chip to show/hide that colour; automation ids
-/// `markers.filter.<label>`), then the sequence markers (`markers.row.<id>`; click = go to it).
+/// `markers.filter.<label>`), then the sequence markers (`markers.row.<id>`; click = go to it,
+/// double-click = the Marker dialog, right-click = its menu).
 pub fn markers(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let Some(seq) = app.session.active_sequence().cloned() else {
@@ -110,9 +111,18 @@ pub fn markers(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             }
             ui.painter().text(pos2(r.min.x + 16.0, r.min.y + 27.0), Align2::LEFT_CENTER, tc, Tokens::mono(11.0), t.hot_text);
             elems.push((format!("markers.row.{}", m.id.0), r, name.to_string()));
-            if resp.clicked() {
+            if resp.clicked() || resp.secondary_clicked() {
                 go = Some(m.start);
             }
+            // double-click: the Marker dialog; right-click: the marker's menu, as on the ruler
+            if resp.double_clicked() {
+                crate::panels::marker_edit::open_dialog(app, m.id.0);
+            }
+            let ctx = ui.ctx().clone();
+            resp.context_menu(|ui| {
+                ui.set_min_width(200.0);
+                crate::panels::marker_edit::menu(app, &ctx, ui, m.id.0, "markers.menu");
+            });
         }
         if seq.markers.is_empty() {
             ui.label(egui::RichText::new(tl!("No markers. Press M to add one.")).color(t.text_faint));

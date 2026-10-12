@@ -22,7 +22,7 @@ use crate::icons::{self, Icon};
 use crate::state::{ThumbnailMode, TimelineView, Tool};
 use crate::theme::Tokens;
 
-use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_rect};
+use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_hit, marker_rect};
 pub use super::timeline_hit::{Hit, ROLL_PX, hit, selection_trim_kind};
 
 const TOP_H: f32 = 58.0; // timecode + toolbar (left) / ruler (right)
@@ -124,6 +124,14 @@ pub enum Drag {
     },
     /// An audio clip's Volume line (see [`super::timeline_volume`]).
     Volume(super::timeline_volume::LineDrag),
+    /// A marker dragged along the ruler: `from` is the time under the pointer at the press, `start`
+    /// where the marker was, `to` where it would land (on a frame).
+    Marker {
+        id: filmcraft_project::MarkerId,
+        start: Tick,
+        from: Tick,
+        to: Tick,
+    },
     Stretch {
         clip: ClipId,
         edge: filmcraft_edit::Edge,
@@ -1422,21 +1430,31 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
         }
     }
     // markers: 8 × 12 pt pentagons in the marker colour, on the top row
+    let dragged = match &app.tl.drag {
+        Some(Drag::Marker { id, to, .. }) => Some((*id, *to)),
+        _ => None,
+    };
     for m in &seq.markers {
-        let x = layout.x_of(m.start);
+        let start = dragged.filter(|(id, _)| *id == m.id).map_or(m.start, |(_, to)| to);
+        let x = layout.x_of(start);
         let c = m.color.marker_rgb();
         let c = Color32::from_rgb(c[0], c[1], c[2]);
         let shape =
             vec![pos2(x - 4.0, marker_y), pos2(x + 4.0, marker_y), pos2(x + 4.0, marker_y + 8.0), pos2(x, marker_y + 12.0), pos2(x - 4.0, marker_y + 8.0)];
         if m.duration > Tick::ZERO {
-            clip.rect_filled(Rect::from_min_max(pos2(x, marker_y), pos2(layout.x_of(m.start + m.duration), marker_y + 8.0)), 0.0, c.gamma_multiply(0.6));
+            clip.rect_filled(Rect::from_min_max(pos2(x, marker_y), pos2(layout.x_of(start + m.duration), marker_y + 8.0)), 0.0, c.gamma_multiply(0.6));
         }
         clip.add(egui::Shape::convex_polygon(shape, c, Stroke::NONE));
-        let mr = marker_rect(layout, m.start);
+        let mr = marker_rect(layout, start);
         app.auto.add(&format!("timeline.marker.{}", m.id.0), mr, &m.name);
-        if ui.rect_contains_pointer(mr) && !m.name.is_empty() {
+        if dragged.is_none() && ui.rect_contains_pointer(mr) && !(m.name.is_empty() && m.comment.is_empty()) {
             egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new(("mk", m.id.0)), egui::PopupAnchor::Pointer).show(|ui| {
-                ui.label(&m.name);
+                if !m.name.is_empty() {
+                    ui.strong(&m.name);
+                }
+                if !m.comment.is_empty() {
+                    ui.label(&m.comment);
+                }
             });
         }
     }
@@ -1721,22 +1739,6 @@ fn shift_track(seq: &Sequence, tid: TrackId, delta: i32) -> Option<TrackId> {
 
 /// The clip context menu: groups (separated by rules) of (label, command id). Entries marked `…`
 /// open their dialog through `menus::invoke`, like the same item in the Clip menu.
-/// The menu of a right-clicked Timeline marker (automation ids `timeline.markerMenu.<command>`);
-/// the marker is under the playhead, where Clear Selected Marker looks for it (#695).
-fn marker_menu(app: &mut FilmcraftApp, ctx: &egui::Context, ui: &mut egui::Ui) {
-    for (label, cmd) in [("Clear Selected Marker", "markers.clearCurrent"), ("Clear Markers", "markers.clearAll")] {
-        let label = crate::i18n::t(label);
-        let r = ui.button(label);
-        app.auto.add(&format!("timeline.markerMenu.{cmd}"), r.rect, label);
-        if r.clicked() {
-            if let Err(e) = crate::menus::invoke(app, ctx, cmd, json!({})) {
-                app.ui.status = e;
-            }
-            ui.close();
-        }
-    }
-}
-
 pub(crate) const CLIP_MENU: &[&[(&str, &str)]] = &[
     &[
         ("Cut", "edit.cut"),
@@ -2064,7 +2066,11 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             g => g,
         };
         let started = match (tool, grab) {
-            (_, Grab::Other(Hit::Ruler)) => Some(Drag::Scrub),
+            // a press on a marker grabs it (a drag moves it); elsewhere on the ruler it scrubs
+            (_, Grab::Other(Hit::Ruler)) => Some(match marker_hit(seq, layout, p) {
+                Some((id, start)) => Drag::Marker { id, start, from: t, to: start },
+                None => Drag::Scrub,
+            }),
             (Tool::Hand, _) => Some(Drag::Pan { last: p }),
             (Tool::Zoom, _) => {
                 if resp.clicked() {
@@ -2191,7 +2197,7 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             (_, Grab::Other(Hit::Empty { .. } | Hit::None)) => None,
         };
         if let Some(d) = started {
-            if matches!(d, Drag::Scrub) {
+            if matches!(d, Drag::Scrub | Drag::Marker { .. }) {
                 app.stop();
                 let mut tt = rate.snap_nearest(layout.tick_at(p.x).max(Tick::ZERO));
                 if mods.shift || app.session.prefs.timeline.snap_playhead {
@@ -2224,6 +2230,10 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 }
                 app.session.set_playhead(tt);
                 Some(Drag::Scrub)
+            }
+            Drag::Marker { id, start, from, .. } => {
+                let to = rate.snap_nearest((start + (t_here - from)).max(Tick::ZERO));
+                Some(Drag::Marker { id, start, from, to })
             }
             Drag::Pan { last } => {
                 let dx = p.x - last.x;
@@ -2314,6 +2324,14 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         && let Some(d) = app.tl.drag.take()
     {
         let r = match d {
+            Drag::Marker { id, start, to, .. } if to != start => {
+                let r = app.session.execute("markers.edit", json!({"marker": id.0, "time": to.0}));
+                // it stays selected: the playhead goes with it
+                if r.is_ok() {
+                    app.session.set_playhead(to);
+                }
+                Some(r)
+            }
             Drag::Move { clips, offset, track_delta, copy, .. } if offset != Tick::ZERO || track_delta != 0 => {
                 let moves: Vec<Value> = clips
                     .iter()
@@ -2423,11 +2441,18 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
     if resp.secondary_clicked()
         && let Some(p) = resp.interact_pointer_pos()
     {
-        let marker = marker_at(seq, layout, p);
-        if let Some(m) = marker {
+        let marker = marker_hit(seq, layout, p);
+        if let Some((_, m)) = marker {
             app.session.set_playhead(m.max(Tick::ZERO));
         }
-        ctx.data_mut(|d| d.insert_temp(marker_menu_id, marker.is_some()));
+        ctx.data_mut(|d| d.insert_temp(marker_menu_id, marker.map(|(id, _)| id.0)));
+    }
+    // a double-click on a marker opens the Marker dialog
+    if resp.double_clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+        && let Some((id, _)) = marker_hit(seq, layout, p)
+    {
+        super::marker_edit::open_dialog(app, id.0);
     }
     if resp.secondary_clicked()
         && let Some(p) = resp.interact_pointer_pos()
@@ -2456,8 +2481,8 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
     }
     resp.context_menu(|ui| {
         ui.set_min_width(220.0);
-        if ctx.data(|d| d.get_temp::<bool>(marker_menu_id)).unwrap_or(false) {
-            marker_menu(app, &ctx, ui);
+        if let Some(id) = ctx.data(|d| d.get_temp::<Option<u64>>(marker_menu_id)).flatten() {
+            super::marker_edit::menu(app, &ctx, ui, id, "timeline.markerMenu");
             return;
         }
         if let Some(target) = ctx.data(|d| d.get_temp::<Option<EditPointTarget>>(edit_point_menu_id)).flatten() {

@@ -81,6 +81,11 @@ pub fn marker_at(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<Tick> {
     seq.markers.iter().rev().map(|m| m.start).find(|t| marker_rect(layout, *t).contains(pos))
 }
 
+/// The marker (id and start) whose pentagon is under `pos` on the ruler, as [`marker_at`].
+pub fn marker_hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<(filmcraft_project::MarkerId, Tick)> {
+    seq.markers.iter().rev().find(|m| marker_rect(layout, m.start).contains(pos)).map(|m| (m.id, m.start))
+}
+
 pub fn hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Hit {
     if layout.ruler.contains(pos) {
         return Hit::Ruler;
