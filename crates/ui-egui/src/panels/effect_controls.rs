@@ -256,6 +256,17 @@ fn selected_clips(app: &FilmcraftApp) -> Vec<(ClipId, TrackItem, TrackKind)> {
 const KF_GROUP_DRAG: &str = "ec-kf-group-drag";
 const KF_POSITIONS: &str = "ec-kf-positions";
 
+/// Whether a click or drag adds to the keyframe selection: Shift or Ctrl/Cmd held now, or when the
+/// button went down (a release can come with the key already up).
+fn adding(ui: &egui::Ui) -> bool {
+    let id = egui::Id::new("ec-kf-press-adds");
+    let (pressed, now) = ui.input(|i| (i.pointer.any_pressed(), i.modifiers.shift || i.modifiers.command));
+    if pressed {
+        ui.data_mut(|d| d.insert_temp(id, now));
+    }
+    now || ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false)
+}
+
 /// Run `cmds` as one undo step named `label` (each keyframe command is its own step otherwise).
 fn run_as_one_step(app: &mut FilmcraftApp, label: &str, cmds: Vec<(String, Value)>) {
     let before = app.session.history.undo.len();
@@ -459,7 +470,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         .unwrap_or_default();
     let mresp = ui.interact(marquee_area, egui::Id::new("ec-marquee"), Sense::click_and_drag());
     app.auto.add("effectControls.keyframeArea", marquee_area, "keyframe area");
-    let marquee_add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+    let marquee_add = adding(ui);
     let mut marquee = None;
     // (where the marquee began is kept: egui forgets the press origin on the frame the button is
     // let go, which is when the marquee selects)
@@ -1055,7 +1066,7 @@ pub(crate) fn param_row(
             app.auto.add(&format!("effectControls.{}.{}.keyframe.{}", e.effect, pkey, k.time.0), kr, "keyframe");
             // a click selects it alone; Shift or Ctrl/Cmd + click adds it to (or takes it out of)
             // the selection; a drag of a selected keyframe moves all the selected ones (#412)
-            let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+            let add = adding(ui);
             if resp.clicked() {
                 if add {
                     if selected {
