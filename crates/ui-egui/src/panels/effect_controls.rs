@@ -333,13 +333,15 @@ fn move_selected_keyframes(app: &mut FilmcraftApp, it: &TrackItem, dt: Tick) {
     let rate = app.session.sequence_rate();
     let speed = it.speed.abs().max(1e-6);
     let last = (it.end() - rate.frame_duration()).max(it.start);
+    let dt = rate.snap_nearest(dt);
     let mut moves: Vec<(KeyframeRef, Tick)> = app
         .ui
         .keyframe_selection
         .iter()
         .filter(|k| k.clip == it.id.0)
         .map(|k| {
-            let ntl = rate.snap_nearest(timeline_time_of(it, k.time) + dt).clamp(it.start, last);
+            // (the move, not each keyframe, snaps to whole frames: they all move by the same time)
+            let ntl = (timeline_time_of(it, k.time) + dt).clamp(it.start, last);
             (k.clone(), it.source_in + Tick(((ntl - it.start).0 as f64 * speed) as i64))
         })
         .filter(|(k, to)| *to != k.time)
