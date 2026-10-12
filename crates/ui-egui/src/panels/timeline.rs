@@ -1581,16 +1581,31 @@ fn vertical_scrollbar(ui: &mut egui::Ui, bar: Rect, value: &mut f32, max: f32, i
 
 /// Snap `t` to nearby candidates (edits, playhead, markers, in/out). Returns snapped tick.
 fn snap(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId]) -> Tick {
-    snap_to(app, seq, layout, t, exclude, true)
+    snap_to(app, seq, layout, t, exclude, true, None)
+}
+
+/// Where a dragged marker lands: on a clip's start or end (a cut), the In/Out points or another
+/// marker when it comes within `SNAP_PX` of one, with snapping on; not onto itself, nor onto the
+/// playhead, which the press put where the marker was.
+fn snap_marker(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, marker: filmcraft_project::MarkerId) -> Tick {
+    snap_to(app, seq, layout, t, &[], false, Some(marker))
 }
 
 /// Where a dragged playhead lands: [`snap`], but not onto itself, or it would stick where it is
 /// and only move in jumps of `SNAP_PX` (#164).
 fn snap_playhead(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick) -> Tick {
-    snap_to(app, seq, layout, t, &[], false)
+    snap_to(app, seq, layout, t, &[], false, None)
 }
 
-fn snap_to(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId], to_playhead: bool) -> Tick {
+fn snap_to(
+    app: &mut FilmcraftApp,
+    seq: &Sequence,
+    layout: &Layout,
+    t: Tick,
+    exclude: &[ClipId],
+    to_playhead: bool,
+    skip_marker: Option<filmcraft_project::MarkerId>,
+) -> Tick {
     if !app.session.state.snapping {
         return t;
     }
@@ -1607,7 +1622,7 @@ fn snap_to(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exc
     if to_playhead {
         cands.push(app.session.playhead());
     }
-    cands.extend(seq.markers.iter().map(|m| m.start));
+    cands.extend(seq.markers.iter().filter(|m| Some(m.id) != skip_marker).map(|m| m.start));
     cands.extend(seq.mark_in);
     cands.extend(seq.mark_out);
     let x = layout.x_of(t);
@@ -2233,6 +2248,8 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             }
             Drag::Marker { id, start, from, .. } => {
                 let to = rate.snap_nearest((start + (t_here - from)).max(Tick::ZERO));
+                // onto a cut nearby (Add Edit, a clip's start or end), as Premiere does with snapping on
+                let to = snap_marker(app, seq, layout, to, id);
                 Some(Drag::Marker { id, start, from, to })
             }
             Drag::Pan { last } => {

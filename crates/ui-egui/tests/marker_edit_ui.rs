@@ -160,3 +160,24 @@ fn double_click_opens_the_marker_dialog() {
     d.click("markerDialog.delete");
     assert!(d.marker(id).is_none());
 }
+
+/// With snapping on, a marker dragged near a cut (a clip's end, e.g. one made with Add Edit)
+/// lands exactly on it.
+#[test]
+fn a_dragged_marker_snaps_to_a_cut() {
+    let (mut d, id) = Driver::demo();
+    d.exec("sequence.snap", json!({"on": true}));
+    let start = d.marker(id).unwrap().start;
+    // an Add Edit a little after the marker, on every track
+    let cut = start + d.frame(70);
+    d.exec("playhead.set", json!({"time": cut.0}));
+    d.exec("sequence.addEdit", json!({}));
+    d.exec("playhead.set", json!({"frame": 0}));
+    d.frames(3);
+    let (x, y) = d.center(&format!("timeline.marker.{id}"));
+    // to 3 points short of the cut, at 60 points a second
+    let dx = (cut - start).seconds() * 60.0 - 3.0;
+    d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x + dx, "y": y}, "steps": 10}));
+    d.frames(4);
+    assert_eq!(d.marker(id).unwrap().start, cut, "on the cut");
+}
