@@ -28,6 +28,7 @@ pub mod misc;
 pub mod mixer;
 pub mod monitor;
 pub mod monitor_view;
+pub mod motion_overlay;
 pub mod multicam;
 pub mod notes;
 pub mod panel_state;

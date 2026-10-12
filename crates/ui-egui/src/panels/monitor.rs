@@ -295,6 +295,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         eyedropper(app, ui, &pic_resp, pic, target, rate, time);
         crate::panels::graphics::monitor_overlay(app, ui, pic, frame_size);
         crate::panels::masks::monitor_overlay(app, ui, pic, frame_size);
+        // a video clip's Motion, dragged in the picture (on top: it steps aside over graphic layers)
+        crate::panels::motion_overlay::monitor_overlay(app, ui, pic, frame_size);
     }
     if show_picture {
         monitor_view::guides(app, ui, which, video_area, pic, frame_size);
