@@ -251,6 +251,116 @@ fn selected_clips(app: &FilmcraftApp) -> Vec<(ClipId, TrackItem, TrackKind)> {
     out
 }
 
+/// egui data ids: the shared offset of selected keyframes being dragged together, and where the
+/// keyframes were drawn last frame (for a marquee on the lane).
+const KF_GROUP_DRAG: &str = "ec-kf-group-drag";
+const KF_POSITIONS: &str = "ec-kf-positions";
+
+/// Run `cmds` as one undo step named `label` (each keyframe command is its own step otherwise).
+fn run_as_one_step(app: &mut FilmcraftApp, label: &str, cmds: Vec<(String, Value)>) {
+    let before = app.session.history.undo.len();
+    for (c, p) in cmds {
+        if let Err(e) = app.session.execute(&c, p) {
+            app.ui.status = e.to_string();
+        }
+    }
+    let h = &mut app.session.history;
+    // (at the undo limit the oldest steps are dropped as new ones come, so nothing is folded)
+    if h.undo.len() > before + 1 {
+        h.undo.truncate(before + 1);
+        if let Some(u) = h.undo.get_mut(before) {
+            u.0 = label.to_string();
+        }
+    }
+}
+
+/// Edit ▸ Select All with Effect Controls focused, as in Premiere: every keyframe of the clips the
+/// panel shows (effect parameters and masks).
+pub(crate) fn select_all_keyframes(app: &mut FilmcraftApp) {
+    let mut all = Vec::new();
+    for (clip, it, _) in selected_clips(app) {
+        for (idx, e) in it.effects.iter().enumerate() {
+            let mut ids: Vec<&String> = e.params.keys().collect();
+            ids.sort();
+            for id in ids {
+                let Some(p) = e.params.get(id) else { continue };
+                all.extend(p.keyframes.iter().map(|k| KeyframeRef { clip: clip.0, effect: idx, param: id.clone(), mask: None, time: k.time }));
+            }
+            for (mi, m) in e.masks.iter().enumerate() {
+                for id in ["path", "feather", "opacity", "expansion"] {
+                    let Some(p) = m.param(id) else { continue };
+                    all.extend(p.keyframes.iter().map(|k| KeyframeRef { clip: clip.0, effect: idx, param: id.to_string(), mask: Some(mi), time: k.time }));
+                }
+            }
+        }
+    }
+    app.ui.keyframe_selection = all;
+}
+
+/// Delete the selected keyframes, in one undo step. A parameter left without keyframes keeps the
+/// value it had (`effects.deleteKeyframe`).
+pub(crate) fn delete_selected_keyframes(app: &mut FilmcraftApp) {
+    let cmds = app
+        .ui
+        .keyframe_selection
+        .iter()
+        .map(|k| {
+            let mut v = json!({"clip": k.clip, "effect": k.effect, "param": k.param, "mediaTime": k.time.0});
+            if let Some(m) = k.mask {
+                v["mask"] = json!(m);
+            }
+            ("effects.deleteKeyframe".to_string(), v)
+        })
+        .collect();
+    run_as_one_step(app, "Delete Keyframes", cmds);
+    app.ui.keyframe_selection.clear();
+}
+
+/// Move the selected keyframes of clip `it` by `dt` of timeline time, in one undo step: each snaps
+/// to a frame and stays inside the clip, and they stay selected.
+fn move_selected_keyframes(app: &mut FilmcraftApp, it: &TrackItem, dt: Tick) {
+    let rate = app.session.sequence_rate();
+    let speed = it.speed.abs().max(1e-6);
+    let last = (it.end() - rate.frame_duration()).max(it.start);
+    let mut moves: Vec<(KeyframeRef, Tick)> = app
+        .ui
+        .keyframe_selection
+        .iter()
+        .filter(|k| k.clip == it.id.0)
+        .map(|k| {
+            let ntl = rate.snap_nearest(timeline_time_of(it, k.time) + dt).clamp(it.start, last);
+            (k.clone(), it.source_in + Tick(((ntl - it.start).0 as f64 * speed) as i64))
+        })
+        .filter(|(k, to)| *to != k.time)
+        .collect();
+    if moves.is_empty() {
+        return;
+    }
+    // the last ones first when moving right (the first ones when moving left), so none lands on a
+    // keyframe that has not moved yet
+    if dt.0 > 0 {
+        moves.sort_by(|a, b| b.0.time.cmp(&a.0.time));
+    } else {
+        moves.sort_by(|a, b| a.0.time.cmp(&b.0.time));
+    }
+    let cmds = moves
+        .iter()
+        .map(|(k, to)| {
+            let mut v = json!({"clip": k.clip, "effect": k.effect, "param": k.param, "mediaTime": k.time.0, "to": to.0});
+            if let Some(m) = k.mask {
+                v["mask"] = json!(m);
+            }
+            ("effects.moveKeyframe".to_string(), v)
+        })
+        .collect();
+    run_as_one_step(app, "Move Keyframes", cmds);
+    for s in app.ui.keyframe_selection.iter_mut() {
+        if let Some((_, to)) = moves.iter().find(|(k, _)| *k == *s) {
+            s.time = *to;
+        }
+    }
+}
+
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let clips = selected_clips(app);
@@ -335,7 +445,52 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // scrollbar sits at the panel's right edge (#643)
     let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(body.min, pos2(lane.max.x, body.max.y))).id_salt("ec-body"));
     bui.set_clip_rect(Rect::from_min_max(body.min, pos2(rect.max.x, body.max.y)));
-    let scroll_out = egui::ScrollArea::vertical().id_salt("ec-scroll").auto_shrink([false, false]).show(&mut bui, |bui| {
+    // a marquee on the lane's empty space selects the keyframes inside it (Shift or Ctrl/Cmd adds
+    // to the selection); a click there lets go of them. Registered under the rows, so a keyframe
+    // under the pointer gets it first; it uses where the keyframes were drawn last frame.
+    let marquee_area = Rect::from_min_max(pos2(lane.min.x, bar.max.y + 2.0), lane.max);
+    let kf_positions: Vec<(KeyframeRef, f32, f32)> = ui
+        .data_mut(|d| {
+            let id = egui::Id::new(KF_POSITIONS);
+            let v = d.get_temp(id);
+            d.remove::<Vec<(KeyframeRef, f32, f32)>>(id);
+            v
+        })
+        .unwrap_or_default();
+    let mresp = ui.interact(marquee_area, egui::Id::new("ec-marquee"), Sense::click_and_drag());
+    app.auto.add("effectControls.keyframeArea", marquee_area, "keyframe area");
+    let marquee_add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+    let mut marquee = None;
+    if let (Some(a), Some(b)) = (ui.input(|i| i.pointer.press_origin()), mresp.interact_pointer_pos())
+        && (mresp.dragged() || mresp.drag_stopped())
+    {
+        let r = Rect::from_two_pos(a, b);
+        marquee = Some(r);
+        if mresp.drag_stopped() {
+            let inside = kf_positions.iter().filter(|(_, x, y)| r.contains(pos2(*x, *y))).map(|(k, _, _)| k.clone());
+            if marquee_add {
+                for k in inside {
+                    if !app.ui.keyframe_selection.contains(&k) {
+                        app.ui.keyframe_selection.push(k);
+                    }
+                }
+            } else {
+                app.ui.keyframe_selection = inside.collect();
+            }
+        }
+    } else if mresp.clicked() && !marquee_add {
+        app.ui.keyframe_selection.clear();
+    }
+    // Delete / Backspace with Effect Controls focused deletes the selected keyframes (unless a value
+    // field is being typed in)
+    if app.ui.focused == crate::dock::PanelKind::EffectControls
+        && !app.ui.keyframe_selection.is_empty()
+        && ui.memory(|m| m.focused().is_none())
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace))
+    {
+        delete_selected_keyframes(app);
+    }
+    let scroll_out = egui::ScrollArea::vertical().id_salt("ec-scroll").auto_shrink([false, false]).drag_to_scroll(false).show(&mut bui, |bui| {
         for (clip, it, kind) in &clips {
             let clip = *clip;
             let (hr, _) = bui.allocate_exact_size(vec2(body.width(), 18.0), Sense::hover());
@@ -440,6 +595,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         seq.settings.drop_frame,
         &t,
     );
+    if let Some(r) = marquee {
+        let r = r.intersect(marquee_area);
+        ui.painter().rect_filled(r, 0.0, t.accent.gamma_multiply(0.15));
+        ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    }
     ui.painter().rect_filled(bar.shrink2(vec2(0.0, 2.0)), 2.0, t.clip_bar_bg);
     ui.painter().with_clip_rect(bar).text(pos2(bar.min.x + 4.0, bar.center().y), Align2::LEFT_CENTER, &it.name, Tokens::ui(10.0), t.text);
     // click or drag anywhere on the ruler (or the bar) to move the playhead (after the rows, which
@@ -860,22 +1020,44 @@ pub(crate) fn param_row(
                 continue;
             }
             let id = egui::Id::new(("kf", clip.0, idx, pkey, k.time.0));
-            let drag_off: Option<f32> = ui.data(|d| d.get_temp(id));
+            let this = KeyframeRef { clip: clip.0, effect: idx, param: pd.id.to_string(), mask, time: k.time };
+            let selected = app.ui.keyframe_selection.contains(&this);
+            // selected keyframes move together: one offset for all of them while one is dragged
+            let group: Option<f32> = ui.data(|d| d.get_temp(egui::Id::new(KF_GROUP_DRAG)));
+            let own: Option<f32> = ui.data(|d| d.get_temp(id));
+            let drag_off = if selected && group.is_some() { group } else { own };
             let kx = lane.min.x + f * lane.width() + drag_off.unwrap_or(0.0);
             if drag_off.is_none() && (kx < vis.0 - 8.0 || kx > vis.1 + 8.0) {
                 continue;
             }
+            // where it is, for a marquee drawn on the lane (next frame)
+            ui.data_mut(|d| d.get_temp_mut_or_default::<Vec<(KeyframeRef, f32, f32)>>(egui::Id::new(KF_POSITIONS)).push((this.clone(), kx, y)));
             // about Premiere's size: a diamond ~9 points wide
             let kr = Rect::from_center_size(pos2(kx, y), vec2(15.0, 15.0));
             let resp = ui.interact(kr.expand(2.0), id, Sense::click_and_drag());
             app.auto.add(&format!("effectControls.{}.{}.keyframe.{}", e.effect, pkey, k.time.0), kr, "keyframe");
-            // highlighted when selected (not merely under the playhead: that lit up every
-            // parameter's keyframe at the same time, #412)
-            let is_this = |s: &KeyframeRef| s.clip == clip.0 && s.effect == idx && s.mask == mask && s.param == pd.id && s.time == k.time;
-            if resp.clicked() || resp.drag_started() {
-                app.ui.keyframe_selection = vec![KeyframeRef { clip: clip.0, effect: idx, param: pd.id.to_string(), mask, time: k.time }];
+            // a click selects it alone; Shift or Ctrl/Cmd + click adds it to (or takes it out of)
+            // the selection; a drag of a selected keyframe moves all the selected ones (#412)
+            let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+            if resp.clicked() {
+                if add {
+                    if selected {
+                        app.ui.keyframe_selection.retain(|s| *s != this);
+                    } else {
+                        app.ui.keyframe_selection.push(this.clone());
+                    }
+                } else {
+                    app.ui.keyframe_selection = vec![this.clone()];
+                }
+            } else if resp.drag_started() && !selected {
+                if add {
+                    app.ui.keyframe_selection.push(this.clone());
+                } else {
+                    app.ui.keyframe_selection = vec![this.clone()];
+                }
             }
-            let sel = resp.dragged() || app.ui.keyframe_selection.iter().any(is_this);
+            let together = app.ui.keyframe_selection.len() > 1 && app.ui.keyframe_selection.contains(&this);
+            let sel = resp.dragged() || app.ui.keyframe_selection.contains(&this);
             let col = if sel { t.hot_text } else { Color32::from_rgb(0xb0, 0xb0, 0xb0) };
             match k.interp {
                 filmcraft_project::Interpolation::Hold => {
@@ -887,27 +1069,41 @@ pub(crate) fn param_row(
                 }
             }
             if resp.dragged() {
-                let off = drag_off.unwrap_or(0.0) + resp.drag_delta().x;
-                ui.data_mut(|d| d.insert_temp(id, off));
-            }
-            if resp.drag_stopped() {
-                let off = drag_off.unwrap_or(0.0);
-                ui.data_mut(|d| d.remove::<f32>(id));
-                let new_tl =
-                    rate.snap_nearest(it.start + Tick(((f + off / lane.width()) as f64 * dur) as i64)).clamp(it.start, it.end() - rate.frame_duration());
-                let new_media = it.source_in + Tick(((new_tl - it.start).0 as f64 * it.speed.abs()) as i64);
-                if new_media != k.time {
-                    // the moved keyframe stays selected
-                    for s in app.ui.keyframe_selection.iter_mut().filter(|s| is_this(s)) {
-                        s.time = new_media;
-                    }
-                    actions.push((
-                        "effects.moveKeyframe".into(),
-                        with_mask(json!({"clip": clip.0, "effect": eff_json, "param": pd.id, "mediaTime": k.time.0, "to": new_media.0})),
-                    ));
+                let delta = resp.drag_delta().x;
+                if together {
+                    let gid = egui::Id::new(KF_GROUP_DRAG);
+                    let off = group.unwrap_or(0.0) + delta;
+                    ui.data_mut(|d| d.insert_temp(gid, off));
+                } else {
+                    let off = own.unwrap_or(0.0) + delta;
+                    ui.data_mut(|d| d.insert_temp(id, off));
                 }
             }
-            if resp.clicked() {
+            if resp.drag_stopped() {
+                if together {
+                    let off = group.unwrap_or(0.0);
+                    ui.data_mut(|d| d.remove::<f32>(egui::Id::new(KF_GROUP_DRAG)));
+                    let dt = Tick(((off / lane.width().max(1.0)) as f64 * dur) as i64);
+                    move_selected_keyframes(app, it, dt);
+                } else {
+                    let off = own.unwrap_or(0.0);
+                    ui.data_mut(|d| d.remove::<f32>(id));
+                    let new_tl =
+                        rate.snap_nearest(it.start + Tick(((f + off / lane.width()) as f64 * dur) as i64)).clamp(it.start, it.end() - rate.frame_duration());
+                    let new_media = it.source_in + Tick(((new_tl - it.start).0 as f64 * it.speed.abs()) as i64);
+                    if new_media != k.time {
+                        // the moved keyframe stays selected
+                        for s in app.ui.keyframe_selection.iter_mut().filter(|s| **s == this) {
+                            s.time = new_media;
+                        }
+                        actions.push((
+                            "effects.moveKeyframe".into(),
+                            with_mask(json!({"clip": clip.0, "effect": eff_json, "param": pd.id, "mediaTime": k.time.0, "to": new_media.0})),
+                        ));
+                    }
+                }
+            }
+            if resp.clicked() && !add {
                 actions.push(("playhead.set".into(), json!({"time": tl.0})));
             }
             resp.context_menu(|ui| {
@@ -922,17 +1118,33 @@ pub(crate) fn param_row(
                     (tl!("Ease Out"), "easeOut"),
                 ] {
                     if ui.button(label).clicked() {
-                        actions.push((
-                            "effects.setInterpolation".into(),
-                            with_mask(json!({"clip": clip.0, "effect": eff_json, "param": pd.id, "mediaTime": k.time.0, "interpolation": key})),
-                        ));
+                        if together {
+                            for s in &app.ui.keyframe_selection {
+                                let mut v = json!({"clip": s.clip, "effect": s.effect, "param": s.param, "mediaTime": s.time.0, "interpolation": key});
+                                if let Some(m) = s.mask {
+                                    v["mask"] = json!(m);
+                                }
+                                actions.push(("effects.setInterpolation".into(), v));
+                            }
+                        } else {
+                            actions.push((
+                                "effects.setInterpolation".into(),
+                                with_mask(json!({"clip": clip.0, "effect": eff_json, "param": pd.id, "mediaTime": k.time.0, "interpolation": key})),
+                            ));
+                        }
                         ui.close();
                     }
                 }
                 ui.separator();
                 if ui.button(tl!("Clear")).clicked() {
-                    actions
-                        .push(("effects.deleteKeyframe".into(), with_mask(json!({"clip": clip.0, "effect": eff_json, "param": pd.id, "mediaTime": k.time.0}))));
+                    if together {
+                        delete_selected_keyframes(app);
+                    } else {
+                        actions.push((
+                            "effects.deleteKeyframe".into(),
+                            with_mask(json!({"clip": clip.0, "effect": eff_json, "param": pd.id, "mediaTime": k.time.0})),
+                        ));
+                    }
                     ui.close();
                 }
             });

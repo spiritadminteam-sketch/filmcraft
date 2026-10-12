@@ -1397,6 +1397,25 @@ impl FilmcraftApp {
             }
         });
         for mut id in fire {
+            // With Effect Controls focused, Select All / Deselect All act on its keyframes and
+            // Clear / Ripple Delete delete the selected ones, as in Premiere
+            if self.ui.focused == PanelKind::EffectControls {
+                match id.as_str() {
+                    "edit.selectAll" => {
+                        panels::effect_controls::select_all_keyframes(self);
+                        continue;
+                    }
+                    "edit.deselectAll" => {
+                        self.ui.keyframe_selection.clear();
+                        continue;
+                    }
+                    "edit.clear" | "edit.rippleDelete" if !self.ui.keyframe_selection.is_empty() => {
+                        panels::effect_controls::delete_selected_keyframes(self);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             // Select All / Deselect All act on the Project panel's items when it has focus (#168).
             // Select All takes only what the shown bin lists, not the whole project (#456).
             if self.ui.focused == PanelKind::Project && id == "edit.selectAll" {
