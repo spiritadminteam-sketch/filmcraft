@@ -461,7 +461,20 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     app.auto.add("effectControls.keyframeArea", marquee_area, "keyframe area");
     let marquee_add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
     let mut marquee = None;
-    if let (Some(a), Some(b)) = (ui.input(|i| i.pointer.press_origin()), mresp.interact_pointer_pos())
+    // (where the marquee began is kept: egui forgets the press origin on the frame the button is
+    // let go, which is when the marquee selects)
+    let origin_id = egui::Id::new("ec-marquee-origin");
+    if mresp.drag_started()
+        && let Some(o) = ui.input(|i| i.pointer.press_origin())
+    {
+        ui.data_mut(|d| d.insert_temp(origin_id, o));
+    }
+    let origin: Option<egui::Pos2> = ui.data(|d| d.get_temp(origin_id));
+    let pointer = mresp.interact_pointer_pos().or_else(|| ui.input(|i| i.pointer.latest_pos()));
+    if mresp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<egui::Pos2>(origin_id));
+    }
+    if let (Some(a), Some(b)) = (origin, pointer)
         && (mresp.dragged() || mresp.drag_stopped())
     {
         let r = Rect::from_two_pos(a, b);

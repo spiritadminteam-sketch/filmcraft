@@ -1409,7 +1409,8 @@ impl FilmcraftApp {
                         self.ui.keyframe_selection.clear();
                         continue;
                     }
-                    "edit.clear" | "edit.rippleDelete" if !self.ui.keyframe_selection.is_empty() => {
+                    // (Delete is also the Project panel's Clear, an app-wide shortcut)
+                    "edit.clear" | "edit.rippleDelete" | "project.delete" if !self.ui.keyframe_selection.is_empty() => {
                         panels::effect_controls::delete_selected_keyframes(self);
                         continue;
                     }
