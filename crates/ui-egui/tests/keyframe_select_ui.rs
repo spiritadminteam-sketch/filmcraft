@@ -206,7 +206,8 @@ fn marquee_shift_click_and_move_together() {
     assert_eq!(selected(&d), 3, "and stay selected");
     // a click on the empty lane lets go of them
     let lane = d.rect("effectControls.keyframeArea");
-    d.ok("ui.click", json!({"x": lane[0] + lane[2] - 4.0, "y": lane[1] + lane[3] - 4.0}));
+    // (away from the scrollbar at the right edge)
+    d.ok("ui.click", json!({"x": lane[0] + lane[2] * 0.5, "y": lane[1] + lane[3] - 6.0}));
     d.frames(3);
     assert_eq!(selected(&d), 0);
 }
