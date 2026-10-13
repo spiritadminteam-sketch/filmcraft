@@ -2,7 +2,13 @@
 //! do, in the spirit of Premiere's Excalibur extension. Type part of a name and press Enter:
 //! - any menu or keyboard command (it runs as from its menu);
 //! - an effect ("Effect: Gaussian Blur"), applied to every selected clip in one undo step;
-//! - a text fill colour ("Fill: Yellow"), set on every selected graphic in one undo step.
+//! - a text fill colour ("Fill: Yellow"), set on every selected graphic in one undo step;
+//! - a speaker marker at the playhead ("Marker: Random");
+//! - values, typed: `+5` / `-12` move the playhead by frames (`1.` one second, `2..` two
+//!   minutes, as Excalibur writes them); `scale 120`, `opacity 50`, `volume -3` set that on
+//!   every selected clip.
+//!
+//! First letters work too: `g b` finds Gaussian Blur, `f r` Fill: Red.
 //!
 //! Up / Down pick, Enter runs, Esc closes. What was run last comes first next time.
 //! Automation ids: `palette.input`, `palette.item.<n>` (n from 0, top first).
@@ -38,6 +44,12 @@ pub enum Action {
     Command(String),
     Effect(String),
     Fill(&'static str),
+    /// Move the playhead by this many frames.
+    Step(i64),
+    /// Set (effect, param) to a value on every selected clip.
+    Set(&'static str, &'static str, f64),
+    /// A marker at the playhead: (name, colour label).
+    Marker(&'static str, &'static str),
 }
 
 impl Action {
@@ -47,6 +59,9 @@ impl Action {
             Action::Command(id) => format!("cmd:{id}"),
             Action::Effect(id) => format!("fx:{id}"),
             Action::Fill(hex) => format!("fill:{hex}"),
+            Action::Step(n) => format!("step:{n}"),
+            Action::Set(e, p, v) => format!("set:{e}.{p}={v}"),
+            Action::Marker(n, _) => format!("marker:{n}"),
         }
     }
 }
@@ -62,9 +77,9 @@ pub struct Entry {
 
 /// Text fill colours: his caption speaker colours first, then the rest of his saved styles.
 pub const FILLS: &[(&str, &str)] = &[
-    ("Green", "#26FF0F"),
-    ("Yellow", "#FCFF0F"),
-    ("Red", "#FF0F0F"),
+    ("Green (Zach)", "#26FF0F"),
+    ("Yellow (Random)", "#FCFF0F"),
+    ("Red (Random 2)", "#FF0F0F"),
     ("Orange", "#FF9C0F"),
     ("Purple", "#910FFF"),
     ("Pink", "#FF00F0"),
@@ -115,6 +130,74 @@ pub fn entries(app: &FilmcraftApp) -> Vec<Entry> {
     for (name, hex) in FILLS {
         out.push(Entry { label: format!("Fill: {name}"), detail: format!("Text colour {hex}"), shortcut: None, action: Action::Fill(hex) });
     }
+    for (name, color) in SPEAKERS {
+        out.push(Entry {
+            label: format!("Marker: {name}"),
+            detail: format!("Speaker marker ({color}) at the playhead"),
+            shortcut: None,
+            action: Action::Marker(name, color),
+        });
+    }
+    out
+}
+
+/// His speakers and their marker colours.
+pub const SPEAKERS: &[(&str, &str)] = &[("Zach", "Forest"), ("Random", "Yellow"), ("Random 2", "Rose")];
+
+/// Clip values a typed number sets: (word, effect, param, shown name, unit).
+const VALUES: &[(&str, &str, &str, &str, &str)] = &[
+    ("scale", "motion", "scale", "Scale", "%"),
+    ("opacity", "opacity", "opacity", "Opacity", "%"),
+    ("volume", "volume", "level", "Volume", " dB"),
+    ("rotation", "motion", "rotation", "Rotation", "°"),
+];
+
+/// Frames in an Excalibur-style time: `5` frames, `1.` seconds, `2..` minutes, `.3` frames.
+fn frames_of(s: &str, fps: f64) -> Option<i64> {
+    let dots = s.chars().rev().take_while(|c| *c == '.').count();
+    let body = s.trim_end_matches('.');
+    if let Some(f) = body.strip_prefix('.') {
+        return f.parse::<i64>().ok();
+    }
+    let n: f64 = body.parse().ok()?;
+    let f = match dots {
+        0 => n,
+        1 => n * fps,
+        2 => n * fps * 60.0,
+        _ => return None,
+    };
+    f.is_finite().then_some(f.round() as i64).filter(|f| f.abs() <= 1_000_000_000)
+}
+
+/// Entries made from what was typed: a playhead move or a value for the selected clips.
+pub fn typed(app: &FilmcraftApp, query: &str) -> Vec<Entry> {
+    let q = query.trim();
+    let mut out = Vec::new();
+    let fps = app.session.sequence_rate().as_f64().max(1.0);
+    if let Some(sign @ ('+' | '-')) = q.chars().next()
+        && let Some(n) = frames_of(q[1..].trim(), fps)
+        && n != 0
+    {
+        let n = if sign == '-' { -n } else { n };
+        out.push(Entry { label: format!("Move playhead {n:+} frames"), detail: "Timecode".into(), shortcut: None, action: Action::Step(n) });
+    }
+    let mut words = q.split_whitespace();
+    if let (Some(w), Some(v), None) = (words.next(), words.next(), words.next())
+        && let Ok(v) = v.parse::<f64>()
+        && v.is_finite()
+    {
+        let w = w.to_lowercase();
+        for (word, effect, param, name, unit) in VALUES {
+            if word.starts_with(&w) {
+                out.push(Entry {
+                    label: format!("Set {name} to {v}{unit}"),
+                    detail: "Selected clips".into(),
+                    shortcut: None,
+                    action: Action::Set(effect, param, v),
+                });
+            }
+        }
+    }
     out
 }
 
@@ -128,6 +211,23 @@ pub fn score(e: &Entry, query: &str) -> Option<i32> {
     let label = e.label.to_lowercase();
     let hay = format!("{label} {}", e.detail.to_lowercase());
     let words: Vec<&str> = q.split_whitespace().collect();
+    // first letters, as Excalibur searches: `g b` = Gaussian Blur (each word starts a word of the
+    // label, in order)
+    let initials = words.len() > 1 && words.iter().all(|w| w.len() <= 2) && {
+        let lw: Vec<&str> = label.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+        let bare_words: Vec<&str> = match label.split_once(": ") {
+            Some((_, b)) => b.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect(),
+            None => lw.clone(),
+        };
+        let seq = |lw: &[&str]| {
+            let mut it = lw.iter();
+            words.iter().all(|q| it.any(|w| w.starts_with(q)))
+        };
+        seq(&bare_words) || seq(&lw)
+    };
+    if initials {
+        return Some(260 - (label.len() as i32).min(80));
+    }
     if !words.iter().all(|w| hay.contains(w)) {
         return None;
     }
@@ -149,14 +249,13 @@ pub fn score(e: &Entry, query: &str) -> Option<i32> {
 /// The matches for `query`, best first, recent ones lifted.
 pub fn matches(app: &FilmcraftApp, query: &str) -> Vec<Entry> {
     let recent = &app.ui.palette_recent;
-    let mut v: Vec<(i32, Entry)> = entries(app)
-        .into_iter()
-        .filter_map(|e| {
-            let s = score(&e, query)?;
-            let r = recent.iter().position(|k| *k == e.action.key()).map_or(0, |i| 400 - (i as i32) * 10);
-            Some((s + r, e))
-        })
-        .collect();
+    let typed = typed(app, query);
+    let mut v: Vec<(i32, Entry)> = typed.into_iter().map(|e| (10_000, e)).collect();
+    v.extend(entries(app).into_iter().filter_map(|e| {
+        let s = score(&e, query)?;
+        let r = recent.iter().position(|k| *k == e.action.key()).map_or(0, |i| 400 - (i as i32) * 10);
+        Some((s + r, e))
+    }));
     v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.label.cmp(&b.1.label)));
     v.into_iter().map(|(_, e)| e).collect()
 }
@@ -204,6 +303,17 @@ pub fn run(app: &mut FilmcraftApp, ctx: &egui::Context, a: &Action) -> Result<()
                 app.session.execute("effects.apply", json!({"clips": clips, "effect": id})).map(|_| ()).map_err(|e| e.to_string())
             }
         }
+        Action::Step(n) => app.session.execute("playhead.step", json!({"frames": n})).map(|_| ()).map_err(|e| e.to_string()),
+        Action::Set(effect, param, v) => {
+            let clips: Vec<u64> = app.session.state.selection.iter().map(|c| c.0).collect();
+            if clips.is_empty() {
+                Err("select the clips to change".into())
+            } else {
+                let cmds = clips.iter().map(|c| ("effects.setParam", json!({"clip": c, "effect": effect, "param": param, "value": v}))).collect();
+                as_one_step(app, "Set Value", cmds)
+            }
+        }
+        Action::Marker(name, color) => app.session.execute("markers.add", json!({"name": name, "color": color})).map(|_| ()).map_err(|e| e.to_string()),
         Action::Fill(hex) => {
             let clips = selected_graphics(app);
             if clips.is_empty() {
@@ -337,6 +447,25 @@ mod tests {
         // the detail (a menu path) is searched too
         assert!(score(&e("Ripple Delete", "Edit"), "edit ripple").is_some());
         assert_eq!(score(&e("Anything", ""), "  "), Some(0));
+    }
+
+    #[test]
+    fn first_letters_find_words_in_order() {
+        assert!(score(&e("Effect: Gaussian Blur", "Video Effect"), "g b").unwrap_or(0) >= 200);
+        assert!(score(&e("Fill: Red (Random 2)", ""), "f r").unwrap_or(0) >= 200);
+        assert!(score(&e("Add Marker to Selection", ""), "a m t s").unwrap_or(0) >= 200);
+        assert!(score(&e("Effect: Gaussian Blur", "Video Effect"), "b g").is_none(), "in order");
+    }
+
+    #[test]
+    fn excalibur_times() {
+        assert_eq!(frames_of("5", 60.0), Some(5));
+        assert_eq!(frames_of("1.", 60.0), Some(60));
+        assert_eq!(frames_of("2..", 60.0), Some(7200));
+        assert_eq!(frames_of(".3", 60.0), Some(3));
+        assert_eq!(frames_of("x", 60.0), None);
+        assert_eq!(frames_of("1...", 60.0), None);
+        assert_eq!(frames_of("1e300", 60.0), None, "hostile numbers don't overflow");
     }
 
     #[test]
