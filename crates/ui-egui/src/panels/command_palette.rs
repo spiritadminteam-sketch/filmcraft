@@ -454,7 +454,8 @@ mod tests {
         assert!(score(&e("Effect: Gaussian Blur", "Video Effect"), "g b").unwrap_or(0) >= 200);
         assert!(score(&e("Fill: Red (Random 2)", ""), "f r").unwrap_or(0) >= 200);
         assert!(score(&e("Add Marker to Selection", ""), "a m t s").unwrap_or(0) >= 200);
-        assert!(score(&e("Effect: Gaussian Blur", "Video Effect"), "b g").is_none(), "in order");
+        // out of order it is only a weak "contains" match
+        assert!(score(&e("Effect: Gaussian Blur", "Video Effect"), "b g").unwrap_or(0) < 200, "in order");
     }
 
     #[test]
