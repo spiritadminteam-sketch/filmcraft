@@ -567,6 +567,17 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     draw_top(app, ui, rect, &seq, &layout, &t, seq_id);
 
     // ---- playhead
+    // chapter markers: a line from the ruler down through every track, in the marker's colour,
+    // so the video's sections show at any zoom
+    let hidden: Vec<[u8; 3]> = app.session.state.hidden_marker_colors.iter().map(|l| l.marker_rgb()).collect();
+    for m in seq.markers.iter().filter(|m| m.kind == filmcraft_project::MarkerKind::Chapter) {
+        let c = m.color.marker_rgb();
+        let x = layout.x_of(m.start);
+        if hidden.contains(&c) || x < content.min.x - 1.0 || x > content.max.x + 1.0 {
+            continue;
+        }
+        painter.line_segment([pos2(x, ruler.min.y + 14.0), pos2(x, content.max.y)], Stroke::new(1.5, Color32::from_rgb(c[0], c[1], c[2])));
+    }
     let ph = app.session.playhead();
     let px = layout.x_of(ph);
     if px >= content.min.x - 1.0 && px <= content.max.x + 1.0 {

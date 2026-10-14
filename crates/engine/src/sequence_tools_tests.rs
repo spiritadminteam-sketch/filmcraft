@@ -634,3 +634,14 @@ fn markers_move_and_delete_by_id() {
     s.execute("edit.undo", json!({})).unwrap();
     assert_eq!(s.active_sequence().unwrap().markers.len(), 2, "undo brings it back");
 }
+
+/// Chapter markers are red unless a colour is given, so they stand apart from comment markers.
+#[test]
+fn chapter_markers_are_red_by_default() {
+    let (mut s, _) = fresh();
+    let id = s.execute("markers.addChapter", json!({"frame": 10})).unwrap()["marker"].as_u64().unwrap();
+    let m = s.active_sequence().unwrap().markers.iter().find(|m| m.id.0 == id).unwrap().clone();
+    assert_eq!((m.kind, m.color), (MarkerKind::Chapter, Label::Rose));
+    let id = s.execute("markers.addChapter", json!({"frame": 20, "color": "Blue"})).unwrap()["marker"].as_u64().unwrap();
+    assert_eq!(s.active_sequence().unwrap().markers.iter().find(|m| m.id.0 == id).unwrap().color, Label::Blue);
+}

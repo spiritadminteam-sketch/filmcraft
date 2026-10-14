@@ -964,7 +964,9 @@ pub fn ripple_markers(markers: &mut Vec<Marker>, from: Tick, shift: Tick) {
 
 fn add_marker(s: &mut Session, label: &str, t: Tick, dur: Tick, kind: MarkerKind, name: String, p: &Value) -> Result<MarkerId> {
     let comment = str_p(p, "comment").unwrap_or("").to_string();
-    let color = str_p(p, "color").and_then(Label::from_name).unwrap_or(Label::Green);
+    // chapters are red by default, so they stand apart from comment markers (as in Premiere)
+    let default = if kind == MarkerKind::Chapter { Label::Rose } else { Label::Green };
+    let color = str_p(p, "color").and_then(Label::from_name).unwrap_or(default);
     s.edit_sequence(label, |q, ctx, _| {
         let id = MarkerId(ctx.alloc());
         q.markers.push(Marker { id, start: t, duration: dur, name, comment, kind, color });
