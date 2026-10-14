@@ -139,6 +139,11 @@ fn type_tool_edit_style_and_move() {
     let list3 = d.exec("graphics.list", json!({"clip": clip}));
     let q1 = list3["layers"][0]["quad"][0][0].as_f64().unwrap();
     assert!(q1 > q0 + 20.0, "moved right: {q0} → {q1}");
+    // the layer followed the pointer live, but the whole drag is one undo step
+    d.exec("edit.undo", json!({}));
+    let back = d.exec("graphics.list", json!({"clip": clip}))["layers"][0]["quad"][0][0].as_f64().unwrap();
+    assert!((back - q0).abs() < 0.5, "one undo puts it back: {q0} vs {back}");
+    d.exec("edit.redo", json!({}));
     d.shot("properties-styled");
 
     // shapes: rectangle tool drag

@@ -688,19 +688,46 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
     if let Some(d) = drag {
         let cur = resp.interact_pointer_pos().or(hover).unwrap_or(d.start);
         let v = views.iter().find(|v| v.clip == d.clip && v.layer == d.layer);
+        // A moved layer follows the pointer live, as in Premiere: where it was when the drag began
+        // (its position, its box on screen, whether its undo step has begun) is kept, so each frame
+        // sets the position from there, all in one undo step.
+        let origin_id = drag_id.with("move-origin");
+        let origin: Option<((f64, f64), Rect, bool)> = match (d.kind, v) {
+            (DragKind::Move, Some(v)) => {
+                let o = ui.data(|dd| dd.get_temp(origin_id));
+                Some(o.unwrap_or(((v.spec.transform.position.x, v.spec.transform.position.y), Rect::from_points(&v.quad()), false)))
+            }
+            _ => None,
+        };
         // Snap in Program Monitor (hold ⌘/Ctrl to move freely)
-        let snap_off = match (d.kind, v) {
-            (DragKind::Move, Some(v)) if !ui.input(|i| i.modifiers.command) => {
-                crate::panels::monitor_view::snap_move(app, pic, frame, Rect::from_points(&v.quad()), cur - d.start)
+        let snap_off = match (d.kind, v, origin) {
+            (DragKind::Move, Some(_), Some((_, r0, _))) if !ui.input(|i| i.modifiers.command) => {
+                crate::panels::monitor_view::snap_move(app, pic, frame, r0, cur - d.start)
             }
             _ => (cur - d.start, Vec::new()),
         };
         match d.kind {
             DragKind::Move => {
-                if let Some(v) = v {
-                    let off = snap_off.0;
-                    painter.add(egui::Shape::closed_line(v.quad().iter().map(|q| *q + off).collect(), Stroke::new(1.0, Color32::WHITE)));
+                if let (Some(v), Some(((x0, y0), r0, began))) = (v, origin) {
                     crate::panels::monitor_view::draw_snap_lines(&painter, pic, &snap_off.1);
+                    let off = snap_off.0;
+                    if (cur - d.start).length() > 2.0 {
+                        let lin = Affine { e: 0.0, f: 0.0, ..v.canvas_to_screen };
+                        let delta = lin.inverse().map(|i| i.apply(Vec2::new(off.x as f64, off.y as f64))).unwrap_or_default();
+                        let (nx, ny) = (x0 + delta.x, y0 + delta.y);
+                        let (px, py) = (v.spec.transform.position.x, v.spec.transform.position.y);
+                        if (nx - px).abs() > 1e-9 || (ny - py).abs() > 1e-9 {
+                            actions.push((
+                                "graphics.set".into(),
+                                json!({"clip": v.clip.0, "layer": v.layer, "props": {"position": [nx, ny]}, "merge": true, "begin": !began}),
+                            ));
+                            ui.data_mut(|dd| dd.insert_temp(origin_id, ((x0, y0), r0, true)));
+                        } else if !began {
+                            ui.data_mut(|dd| dd.insert_temp(origin_id, ((x0, y0), r0, false)));
+                        }
+                    } else if !began {
+                        ui.data_mut(|dd| dd.insert_temp(origin_id, ((x0, y0), r0, false)));
+                    }
                 }
             }
             DragKind::Handle(n) => {
@@ -752,21 +779,14 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
             }
         }
         if resp.drag_stopped() {
-            ui.data_mut(|dd| dd.remove::<DragState>(drag_id));
+            ui.data_mut(|dd| {
+                dd.remove::<DragState>(drag_id);
+                dd.remove::<((f64, f64), Rect, bool)>(origin_id);
+            });
             let moved = (cur - d.start).length() > 2.0;
             match d.kind {
-                DragKind::Move if moved => {
-                    if let Some(v) = v {
-                        let lin = Affine { e: 0.0, f: 0.0, ..v.canvas_to_screen };
-                        let off = snap_off.0;
-                        let delta = lin.inverse().map(|i| i.apply(Vec2::new(off.x as f64, off.y as f64))).unwrap_or_default();
-                        let p0 = v.spec.transform.position;
-                        actions.push((
-                            "graphics.set".into(),
-                            json!({"clip": v.clip.0, "layer": v.layer, "props": {"position": [p0.x + delta.x, p0.y + delta.y]}}),
-                        ));
-                    }
-                }
+                // (the layer already followed the pointer while dragging)
+                DragKind::Move => {}
                 DragKind::Handle(n) if moved => {
                     if let Some(v) = v {
                         let props = HandleDrag::new(v, n, d.start, cur, ui.input(|i| i.modifiers.shift)).props(v);
