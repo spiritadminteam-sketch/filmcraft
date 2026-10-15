@@ -50,6 +50,8 @@ pub enum Action {
     Set(&'static str, &'static str, f64),
     /// A marker at the playhead: (name, colour label).
     Marker(&'static str, &'static str),
+    /// A clip label (its `Label` name) on every selected clip, as Excalibur's Label command.
+    Label(&'static str),
 }
 
 impl Action {
@@ -62,6 +64,7 @@ impl Action {
             Action::Step(n) => format!("step:{n}"),
             Action::Set(e, p, v) => format!("set:{e}.{p}={v}"),
             Action::Marker(n, _) => format!("marker:{n}"),
+            Action::Label(l) => format!("label:{l}"),
         }
     }
 }
@@ -129,6 +132,14 @@ pub fn entries(app: &FilmcraftApp) -> Vec<Entry> {
     }
     for (name, hex) in FILLS {
         out.push(Entry { label: format!("Fill: {name}"), detail: format!("Text colour {hex}"), shortcut: None, action: Action::Fill(hex) });
+    }
+    for l in filmcraft_project::Label::ALL {
+        out.push(Entry {
+            label: format!("Label: {}", app.session.prefs.labels.name(l)),
+            detail: "Clip label (selected clips)".into(),
+            shortcut: None,
+            action: Action::Label(l.name()),
+        });
     }
     for (name, color) in SPEAKERS {
         out.push(Entry {
@@ -254,7 +265,10 @@ pub fn matches(app: &FilmcraftApp, query: &str) -> Vec<Entry> {
     v.extend(entries(app).into_iter().filter_map(|e| {
         let s = score(&e, query)?;
         let r = recent.iter().position(|k| *k == e.action.key()).map_or(0, |i| 400 - (i as i32) * 10);
-        Some((s + r, e))
+        // what the palette does itself (a label, a colour, an effect on the selection) before a
+        // menu command of the same name ("label" → Label: Yellow, not the Labels settings)
+        let own = if matches!(e.action, Action::Command(_)) { 0 } else { 60 };
+        Some((s + r + own, e))
     }));
     v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.label.cmp(&b.1.label)));
     v.into_iter().map(|(_, e)| e).collect()
@@ -313,6 +327,13 @@ pub fn run(app: &mut FilmcraftApp, ctx: &egui::Context, a: &Action) -> Result<()
                 as_one_step(app, "Set Value", cmds)
             }
         }
+        Action::Label(l) => {
+            if app.session.state.selection.is_empty() {
+                Err("select the clips to label".into())
+            } else {
+                app.session.execute("edit.label", json!({"label": l})).map(|_| ()).map_err(|e| e.to_string())
+            }
+        }
         Action::Marker(name, color) => app.session.execute("markers.add", json!({"name": name, "color": color})).map(|_| ()).map_err(|e| e.to_string()),
         Action::Fill(hex) => {
             let clips = selected_graphics(app);
@@ -367,8 +388,16 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let screen = ctx.content_rect();
     let width = 520.0_f32.min(screen.width() - 32.0).max(200.0);
     let before = st.query.clone();
-    egui::Area::new(egui::Id::new("command-palette")).order(egui::Order::Foreground).anchor(Align2::CENTER_TOP, [0.0, 90.0]).show(ctx, |ui| {
-        egui::Frame::popup(ui.style()).inner_margin(8.0).show(ui, |ui| {
+    let labels = app.session.prefs.labels.clone();
+    let mut open = true;
+    // a small window: drag it by its title, close it with its ✕ (or Esc)
+    let win = egui::Window::new(tl!("Command Palette"))
+        .id(egui::Id::new("command-palette"))
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .default_pos(pos2(screen.center().x - width / 2.0, screen.min.y + 90.0))
+        .show(ctx, |ui| {
             ui.set_width(width);
             let r = ui.add(
                 egui::TextEdit::singleline(&mut st.query).hint_text(tl!("Type a command, effect or colour…")).desired_width(width).font(egui::TextStyle::Body),
@@ -387,8 +416,16 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                     ui.painter().rect_filled(row, 3.0, t.hover);
                 }
                 let mut x = row.min.x + 8.0;
-                if let Action::Fill(hex) = &e.action {
-                    ui.painter().rect_filled(Rect::from_center_size(pos2(x + 6.0, row.center().y), vec2(12.0, 12.0)), 2.0, hex_rgb(hex));
+                let swatch = match &e.action {
+                    Action::Fill(hex) => Some(hex_rgb(hex)),
+                    Action::Label(l) => filmcraft_project::Label::from_name(l).map(|l| {
+                        let [r, g, b] = labels.rgb(l);
+                        Color32::from_rgb(r, g, b)
+                    }),
+                    _ => None,
+                };
+                if let Some(c) = swatch {
+                    ui.painter().rect_filled(Rect::from_center_size(pos2(x + 6.0, row.center().y), vec2(12.0, 12.0)), 2.0, c);
                     x += 18.0;
                 }
                 ui.painter().text(pos2(x, row.center().y), Align2::LEFT_CENTER, &e.label, Tokens::ui(13.0), t.text);
@@ -406,14 +443,16 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 ui.label(egui::RichText::new(tl!("Nothing matches")).color(t.text_faint));
             }
         });
-    });
+    if let Some(w) = &win {
+        elems.push(("palette.window".into(), w.response.rect, "Command Palette".into()));
+    }
     if st.query != before {
         st.selected = 0;
     }
     for (id, r, l) in elems {
         app.auto.add(&id, r, &l);
     }
-    if esc {
+    if esc || !open {
         app.ui.palette = None;
         return;
     }

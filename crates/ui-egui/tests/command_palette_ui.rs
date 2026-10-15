@@ -153,3 +153,28 @@ fn the_palette_applies_an_effect_and_esc_closes() {
     assert!(d.harness.state().ui.palette.is_none());
     assert_eq!(d.harness.state().session.history.undo.len(), undo, "nothing ran");
 }
+
+/// "label yellow" labels the selected clips Yellow (Excalibur's Label), not the Labels settings;
+/// the palette is a window with a title to drag it by.
+#[test]
+fn the_palette_labels_selected_clips() {
+    let (mut d, _) = Driver::demo();
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = seq["video"][0]["items"][0]["clip"].as_u64().unwrap();
+    d.exec("timeline.select", json!({"clips": [clip]}));
+    d.exec("window.commandPalette", json!({}));
+    d.frames(3);
+    assert!(d.find("palette.window").is_some(), "a window");
+    d.ok("ui.type", json!({"text": "label"}));
+    d.frames(2);
+    let top = d.ok("ui.elements", json!({"prefix": "palette.item.0"}));
+    assert!(top.to_string().contains("Label: "), "a label first, not the Labels settings: {top}");
+    d.ok("ui.type", json!({"text": " yellow"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    let s = &d.harness.state().session;
+    let it = s.active_sequence().unwrap().find_item(filmcraft_project::ClipId(clip)).unwrap().1;
+    assert_eq!(it.label, filmcraft_project::Label::Yellow);
+    assert!(d.harness.state().ui.palette.is_none());
+}
