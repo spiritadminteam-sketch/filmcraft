@@ -63,7 +63,7 @@ jobs:
           FILMCRAFT_REQUIRE_WINRES: "1"
         run: |
           set +e +o pipefail
-          cargo build --release --locked -p filmcraft -p filmcraft-cli --target x86_64-pc-windows-msvc 2>&1 | tee build.log; rc=${PIPESTATUS[0]}
+          cargo build --release --locked -p filmcraft -p filmcraft-cli --features filmcraft/whisper,filmcraft-cli/whisper --target x86_64-pc-windows-msvc 2>&1 | tee build.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then msg=$(grep -E "^error" -A6 build.log | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=build::$msg"; exit $rc; fi
           mkdir -p dist
           cp target/x86_64-pc-windows-msvc/release/filmcraft.exe target/x86_64-pc-windows-msvc/release/filmcraft-cli.exe dist/
