@@ -66,10 +66,10 @@ impl PluginEffect {
             Ok(r) if r.error.is_none() && r.left.len() >= n && r.right.len() >= n => {
                 self.dirty.iter_mut().for_each(|d| *d = false);
                 for (ci, src) in [&r.left, &r.right].into_iter().enumerate() {
-                    if let (Some(c), Some(s)) = (channels.get_mut(ci), src.get(..n)) {
-                        if let Some(dst) = c.get_mut(at..at + n) {
-                            dst.copy_from_slice(s);
-                        }
+                    if let (Some(c), Some(s)) = (channels.get_mut(ci), src.get(..n))
+                        && let Some(dst) = c.get_mut(at..at + n)
+                    {
+                        dst.copy_from_slice(s);
                     }
                 }
             }
@@ -95,11 +95,11 @@ impl AudioEffect for PluginEffect {
     fn set_param(&mut self, id: &str, value: f32) -> bool {
         let Some(i) = self.specs.iter().position(|s| s.id == id) else { return false };
         let v = self.specs.get(i).map_or(value, |s| s.sanitize(value));
-        if let (Some(cur), Some(d)) = (self.values.get_mut(i), self.dirty.get_mut(i)) {
-            if *cur != v {
-                *cur = v;
-                *d = true;
-            }
+        if let (Some(cur), Some(d)) = (self.values.get_mut(i), self.dirty.get_mut(i))
+            && *cur != v
+        {
+            *cur = v;
+            *d = true;
         }
         true
     }
@@ -124,10 +124,10 @@ impl AudioEffect for PluginEffect {
 
 impl Drop for PluginEffect {
     fn drop(&mut self) {
-        if let Some((h, inst)) = self.inst.take() {
-            if h.is_alive() {
-                let _ = h.request(&Request::Destroy { inst }, Duration::from_secs(2));
-            }
+        if let Some((h, inst)) = self.inst.take()
+            && h.is_alive()
+        {
+            let _ = h.request(&Request::Destroy { inst }, Duration::from_secs(2));
         }
     }
 }

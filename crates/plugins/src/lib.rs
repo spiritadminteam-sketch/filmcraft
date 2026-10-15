@@ -64,7 +64,7 @@ fn leak(s: &str) -> &'static str {
     static I: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
     let mut m = I.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(v) = m.get(s) {
-        return *v;
+        return v;
     }
     let v: &'static str = Box::leak(s.to_string().into_boxed_str());
     m.insert(s.to_string(), v);
@@ -106,7 +106,7 @@ fn specs_of(info: &PluginInfo) -> &'static [ParamSpec] {
     let key = format!("{}|{}", info.effect_id(), info.params.iter().map(|p| format!("{}:{}", p.id, p.default)).collect::<Vec<_>>().join(","));
     let mut m = C.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(s) = m.get(&key) {
-        return *s;
+        return s;
     }
     let v: Vec<ParamSpec> = user_params(info)
         .map(|p| {
@@ -260,7 +260,7 @@ pub fn scan(folders: &[PathBuf], progress: &mut dyn FnMut(usize, usize, &str)) -
     // one entry per effect id (a module listed twice, or the same class in two folders)
     let mut seen = std::collections::HashSet::new();
     report.plugins.retain(|p| seen.insert(p.effect_id()));
-    report.plugins.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    report.plugins.sort_by_key(|p| p.name.to_ascii_lowercase());
     let mut st = state().lock().unwrap_or_else(PoisonError::into_inner);
     st.cache = Cache { version: proto::VERSION, folders: report.folders.clone(), plugins: report.plugins.clone(), failed: report.failed.clone() };
     if let Some(p) = st.cache_path.clone() {

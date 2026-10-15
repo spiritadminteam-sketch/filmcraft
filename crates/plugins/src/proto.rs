@@ -203,7 +203,7 @@ impl<'a> Cur<'a> {
     }
     fn samples(&mut self, n: usize) -> std::io::Result<Vec<f32>> {
         let b = self.take(n.checked_mul(4).ok_or_else(|| err("bad length"))?)?;
-        Ok(b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+        Ok(b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
     }
 }
 
