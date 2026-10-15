@@ -128,3 +128,22 @@ fn ultra_key_setting_writes_aggressive_parameters() {
     assert_eq!(e.param("choke").unwrap().value.as_f64(), Some(10.0));
     assert_eq!(e.param("contrast").unwrap().value.as_f64(), Some(10.0));
 }
+
+/// Changing Tolerance by hand while Setting is Default switches it to Custom (as in Premiere), so
+/// the change is not overridden by the Default preset; the other matte values keep Default's.
+#[test]
+fn ultra_key_manual_change_switches_to_custom() {
+    let mut s = demo();
+    let clip = first_v1_clip(&s);
+    s.execute("effects.apply", json!({"clips": [clip], "effect": "ultra_key"})).unwrap();
+    s.execute("effects.setParam", json!({"clip": clip, "effect": "ultra_key", "param": "tolerance", "value": 80.0})).unwrap();
+    let e = s.active_sequence().unwrap().find_item(filmcraft_project::ClipId(clip)).unwrap().1.effect("ultra_key").unwrap().clone();
+    assert_eq!(e.param("setting").unwrap().value, filmcraft_project::ParamValue::Choice(3), "Custom");
+    assert_eq!(e.param("tolerance").unwrap().value.as_f64(), Some(80.0));
+    assert_eq!(e.param("transparency").unwrap().value.as_f64(), Some(45.0), "Default's transparency kept");
+    // the key colour is not a preset value: it leaves Setting alone
+    s.execute("effects.setParam", json!({"clip": clip, "effect": "ultra_key", "param": "setting", "value": 0})).unwrap();
+    s.execute("effects.setParam", json!({"clip": clip, "effect": "ultra_key", "param": "key_color", "value": "#00FF00"})).unwrap();
+    let e = s.active_sequence().unwrap().find_item(filmcraft_project::ClipId(clip)).unwrap().1.effect("ultra_key").unwrap().clone();
+    assert_eq!(e.param("setting").unwrap().value, filmcraft_project::ParamValue::Choice(0));
+}

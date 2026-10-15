@@ -2698,6 +2698,29 @@ fn build() -> Vec<CommandSpec> {
                                 e.params.insert((*id).to_string(), filmcraft_project::Param::new(ParamValue::Float(*value)));
                             }
                         }
+                    } else if e.effect == "ultra_key"
+                        && pid != "setting"
+                        && let Some(ParamValue::Choice(cur)) = e.param("setting").map(|p| p.value.clone())
+                        && let Some(rows) = filmcraft_project::effect::ultra_key_setting(cur)
+                        && rows.iter().any(|(id, _)| *id == pid)
+                    {
+                        // As in Premiere: changing a matte setting by hand switches Setting to Custom
+                        // (the other values keep the preset's), so the change takes effect instead of
+                        // being overridden by Default / Relaxed / Aggressive.
+                        for (id, value) in rows.iter().filter(|(id, _)| *id != pid) {
+                            if let Some(p) = e.param_mut(id) {
+                                p.value = ParamValue::Float(*value);
+                                p.keyframes.clear();
+                            } else {
+                                e.params.insert((*id).to_string(), filmcraft_project::Param::new(ParamValue::Float(*value)));
+                            }
+                        }
+                        match e.param_mut("setting") {
+                            Some(p) => p.value = ParamValue::Choice(3),
+                            None => {
+                                e.params.insert("setting".to_string(), filmcraft_project::Param::new(ParamValue::Choice(3)));
+                            }
+                        }
                     }
                     Ok(keyframes)
                 })?;
