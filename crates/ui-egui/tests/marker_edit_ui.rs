@@ -181,3 +181,18 @@ fn a_dragged_marker_snaps_to_a_cut() {
     d.frames(4);
     assert_eq!(d.marker(id).unwrap().start, cut, "on the cut");
 }
+
+/// Right-click the ruler away from markers: Clear In / Clear Out / Clear In and Out, as in Premiere.
+#[test]
+fn the_ruler_menu_clears_in_and_out() {
+    let (mut d, id) = Driver::demo();
+    d.exec("markers.markIn", json!({"frame": 60}));
+    d.exec("markers.markOut", json!({"frame": 120}));
+    let (x, y) = d.center(&format!("timeline.marker.{id}"));
+    // well right of the marker, on the same ruler row
+    d.ok("ui.click", json!({"x": x + 200.0, "y": y, "button": "right"}));
+    d.frames(3);
+    d.click("timeline.rulerMenu.markers.clearInOut");
+    let seq = d.harness.state().session.active_sequence().unwrap().clone();
+    assert!(seq.mark_in.is_none() && seq.mark_out.is_none(), "In and Out cleared");
+}

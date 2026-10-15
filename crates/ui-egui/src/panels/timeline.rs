@@ -2466,6 +2466,7 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
     }
     // on a marker of the ruler, the marker menu instead (right-clicking a marker selects it first)
     let marker_menu_id = egui::Id::new("timeline.markerMenu.open");
+    let ruler_menu_id = egui::Id::new("timeline.rulerMenu.open");
     if resp.secondary_clicked()
         && let Some(p) = resp.interact_pointer_pos()
     {
@@ -2474,6 +2475,8 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             app.session.set_playhead(m.max(Tick::ZERO));
         }
         ctx.data_mut(|d| d.insert_temp(marker_menu_id, marker.map(|(id, _)| id.0)));
+        // elsewhere on the ruler: Premiere's ruler menu (Clear In / Out)
+        ctx.data_mut(|d| d.insert_temp(ruler_menu_id, marker.is_none() && layout.ruler.contains(p)));
     }
     // a double-click on a marker opens the Marker dialog
     if resp.double_clicked()
@@ -2511,6 +2514,29 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         ui.set_min_width(220.0);
         if let Some(id) = ctx.data(|d| d.get_temp::<Option<u64>>(marker_menu_id)).flatten() {
             super::marker_edit::menu(app, &ctx, ui, id, "timeline.markerMenu");
+            return;
+        }
+        if ctx.data(|d| d.get_temp::<bool>(ruler_menu_id)).unwrap_or(false) {
+            for (label, cmd) in [("Clear In", "markers.clearIn"), ("Clear Out", "markers.clearOut"), ("Clear In and Out", "markers.clearInOut")] {
+                let label = crate::i18n::t(label);
+                let r = ui.button(label);
+                app.auto.add(&format!("timeline.rulerMenu.{cmd}"), r.rect, label);
+                if r.clicked() {
+                    if let Err(e) = crate::menus::invoke(app, &ctx, cmd, json!({})) {
+                        app.ui.status = e;
+                    }
+                    ui.close();
+                }
+            }
+            ui.separator();
+            let r = ui.button(crate::i18n::t("Add Marker"));
+            app.auto.add("timeline.rulerMenu.markers.add", r.rect, "Add Marker");
+            if r.clicked() {
+                if let Err(e) = crate::menus::invoke(app, &ctx, "markers.add", json!({})) {
+                    app.ui.status = e;
+                }
+                ui.close();
+            }
             return;
         }
         if let Some(target) = ctx.data(|d| d.get_temp::<Option<EditPointTarget>>(edit_point_menu_id)).flatten() {
