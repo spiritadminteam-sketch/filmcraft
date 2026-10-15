@@ -89,10 +89,15 @@ jobs:
           find ../vst3-test
       - name: Format and lints (touched crates)
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
-          cargo fmt --all --check
-          cargo clippy --locked -p filmcraft-plugins -p filmcraft-plugin-host -p filmcraft-platform -p filmcraft-project -p filmcraft-render --all-targets --features filmcraft-platform/vst3 -- -D warnings
+          set +e +o pipefail
+          report() { msg=$(grep -E "^(error|warning)|^Diff in|-->|panicked" -A6 "$1" | head -200 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=$2::$msg"; gh release create "test-log-${GITHUB_SHA::7}-lint-${RUNNER_OS}-${GITHUB_RUN_ATTEMPT}" "$1" --prerelease --target "$GITHUB_SHA" --title "lint log" --notes "failed: $2" -R "$GITHUB_REPOSITORY" || true; }
+          cargo fmt --all --check 2>&1 | tee fmt.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report fmt.log "fmt"; exit $rc; fi
+          cargo clippy --locked -p filmcraft-plugins -p filmcraft-plugin-host -p filmcraft-platform -p filmcraft-project -p filmcraft-render --all-targets --features filmcraft-platform/vst3 -- -D warnings 2>&1 | tee clippy.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report clippy.log "clippy"; exit $rc; fi
       - name: Tests
         shell: bash
         env:
