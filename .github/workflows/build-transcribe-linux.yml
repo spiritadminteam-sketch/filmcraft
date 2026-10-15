@@ -1,0 +1,31 @@
+# Fork helper: builds the speech crate's `transcribe` example for Linux x86_64 (word timings from
+# Whisper, used to check caption timing) and publishes it as a pre-release asset. No media involved.
+name: Build transcribe (Linux)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [motion-direct-manipulation]
+    paths: [.github/workflows/build-transcribe-linux.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p filmcraft-speech --features whisper --example transcribe
+          cp target/release/examples/transcribe transcribe-linux-x64
+          gh release delete transcribe-linux --yes --cleanup-tag -R "$GITHUB_REPOSITORY" || true
+          gh release create transcribe-linux transcribe-linux-x64 --prerelease --target "$GITHUB_SHA" \
+            --title "transcribe (Linux x64)" --notes "filmcraft-speech transcribe example, built from $GITHUB_SHA." -R "$GITHUB_REPOSITORY"
