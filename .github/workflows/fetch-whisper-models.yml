@@ -1,0 +1,38 @@
+# Fork helper: mirrors the pinned Whisper model files FilmCraft's speech-to-text downloads
+# (crates/speech/src/models.rs: OpenAI's own Hugging Face repositories, MIT / Apache-2.0) into a
+# pre-release, for machines whose network reaches GitHub but not Hugging Face. Nothing is
+# committed; the files are checked against the SHA-256 pinned in models.rs by FilmCraft on use.
+name: Fetch Whisper models
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [motion-direct-manipulation]
+    paths: [.github/workflows/fetch-whisper-models.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          fetch() { # id rev
+            mkdir -p "$1"
+            for f in config.json generation_config.json tokenizer.json model.safetensors; do
+              curl -fsSL --retry 5 -o "$1/$f" "https://huggingface.co/openai/$1/resolve/$2/$f"
+            done
+            tar -cf "$1.tar" "$1"
+            ls -la "$1"
+          }
+          fetch whisper-base e37978b90ca9030d5170a5c07aadb050351a65bb
+          fetch whisper-small 973afd24965f72e36ca33b3055d56a652f456b4d
+          gh release delete whisper-models --yes --cleanup-tag -R "$GITHUB_REPOSITORY" || true
+          gh release create whisper-models whisper-base.tar whisper-small.tar --prerelease --target "$GITHUB_SHA" \
+            --title "Whisper models (mirror)" --notes "OpenAI Whisper weights (MIT; HF conversion Apache-2.0), pinned revisions from crates/speech/src/models.rs." -R "$GITHUB_REPOSITORY"
