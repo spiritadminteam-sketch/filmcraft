@@ -872,6 +872,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
+name = "com-scrape-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ce183b975b8fc736a20919c4002717255fbd867df575c792aeefa9a56a73ad0"
+
+[[package]]
 name = "combine"
 version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1676,6 +1682,7 @@ dependencies = [
  "filmcraft-export",
  "filmcraft-gpu",
  "filmcraft-platform",
+ "filmcraft-plugins",
  "filmcraft-project",
  "filmcraft-render",
  "filmcraft-time",
@@ -1883,6 +1890,7 @@ dependencies = [
  "filmcraft-interchange",
  "filmcraft-media",
  "filmcraft-mxf",
+ "filmcraft-plugins",
  "filmcraft-project",
  "filmcraft-render",
  "filmcraft-scopes",
@@ -2136,7 +2144,28 @@ dependencies = [
  "objc2-core-media",
  "objc2-core-video",
  "objc2-video-toolbox",
+ "vst3",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "filmcraft-plugin-host"
+version = "0.6.0"
+dependencies = [
+ "filmcraft-platform",
+ "filmcraft-plugins",
+ "serde_json",
+]
+
+[[package]]
+name = "filmcraft-plugins"
+version = "0.6.0"
+dependencies = [
+ "filmcraft-audio-dsp",
+ "filmcraft-project",
+ "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6326,6 +6355,15 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vst3"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e31e3fe7a6f028ded8c5a9984cf283319e6dc63572c9b71da1d4ee9d71d3b6bf"
+dependencies = [
+ "com-scrape-types",
+]
 
 [[package]]
 name = "wait-timeout"
