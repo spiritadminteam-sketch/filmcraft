@@ -82,10 +82,10 @@ mod host {
                 Ok(i) => i,
                 Err(message) => return Response::Error { message },
             };
-            if !params.is_empty() {
-                if let Err(message) = inst.process(&mut [], &mut [], params) {
-                    return Response::Error { message };
-                }
+            if !params.is_empty()
+                && let Err(message) = inst.process(&mut [], &mut [], params)
+            {
+                return Response::Error { message };
             }
             if self.instances.len() >= 512 {
                 return Response::Error { message: "too many plug-in instances".into() };
@@ -182,12 +182,8 @@ fn main() {
     let mut input = BufReader::new(std::io::stdin().lock());
     let mut output = BufWriter::new(std::io::stdout().lock());
     let mut h = host::Host::default();
-    loop {
-        let frame = match proto::read_frame(&mut input) {
-            Ok(Some(f)) => f,
-            // FilmCraft closed the pipe (or sent garbage): stop
-            Ok(None) | Err(_) => break,
-        };
+    // until FilmCraft closes the pipe (or sends garbage)
+    while let Ok(Some(frame)) = proto::read_frame(&mut input) {
         let written = match frame {
             Frame::Json(j) => proto::write_json(&mut output, &handle_json(&mut h, &j)),
             Frame::Process(p) => proto::write_processed(&mut output, &handle_process(&mut h, p)),

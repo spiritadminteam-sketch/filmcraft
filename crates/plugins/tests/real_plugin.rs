@@ -10,10 +10,8 @@ static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn setup() -> Option<std::path::PathBuf> {
     let dir = std::env::var_os("FILMCRAFT_TEST_VST3").map(std::path::PathBuf::from)?;
-    if filmcraft_plugins::client::host_exe().is_none() {
-        eprintln!("skipped: filmcraft-plugin-host is not built");
-        return None;
-    }
+    // with a test plug-in given, a missing helper is a failure, not a skip
+    assert!(filmcraft_plugins::client::host_exe().is_some(), "FILMCRAFT_TEST_VST3 is set but filmcraft-plugin-host is not built");
     Some(dir)
 }
 
