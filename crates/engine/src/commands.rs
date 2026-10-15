@@ -250,7 +250,7 @@ fn resolve_effect_name(s: &Session, p: &Value, name: &str) -> Option<&'static fi
         return Some(d);
     }
     let n = name.to_ascii_lowercase();
-    let cands: Vec<_> = filmcraft_project::effect_defs().iter().filter(|e| e.name.to_ascii_lowercase() == n).collect();
+    let cands: Vec<_> = filmcraft_project::all_effect_defs().into_iter().filter(|e| e.name.to_ascii_lowercase() == n).collect();
     if cands.len() <= 1 {
         return cands.first().copied().or_else(|| filmcraft_project::find_effect(&n));
     }
@@ -2966,6 +2966,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::presets::commands());
     v.extend(crate::export_tools::commands());
     v.extend(crate::transcript::commands());
+    v.extend(crate::plugins::commands());
     v.extend(crate::panels::commands());
     v.extend(crate::scopes::commands());
     v.extend(crate::remix::commands());
@@ -3398,8 +3399,8 @@ fn list_effects(p: &Value) -> Value {
     let kind = str_p(p, "kind");
     let folder = str_p(p, "folder");
     let detail = p.get("detail").and_then(Value::as_bool).unwrap_or(false);
-    let out = filmcraft_project::effect_defs()
-        .iter()
+    let out = filmcraft_project::all_effect_defs()
+        .into_iter()
         .filter(|d| kind.is_none_or(|k| format!("{:?}", d.kind).eq_ignore_ascii_case(k)))
         .filter(|d| folder.is_none_or(|f| d.category.join("/").starts_with(f)))
         .map(|d| {

@@ -52,6 +52,11 @@ pub mod videotoolbox;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 pub mod videotoolbox_encode;
+/// VST3 audio effect hosting, used only by the `filmcraft-plugin-host` helper process
+/// (docs/adr/0002-plugin-hosting.md).
+#[cfg(all(feature = "vst3", any(target_os = "windows", target_os = "linux")))]
+#[allow(unsafe_code)]
+pub mod vst3host;
 
 pub use hybrid::HybridDecoder;
 

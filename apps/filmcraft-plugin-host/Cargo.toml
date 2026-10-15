@@ -1,0 +1,18 @@
+[package]
+name = "filmcraft-plugin-host"
+description = "FilmCraft's plug-in host: runs VST3 audio effects in a separate process, so a crashing plug-in never takes the editor down"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "filmcraft-plugin-host"
+path = "src/main.rs"
+
+[dependencies]
+filmcraft-plugins = { workspace = true }
+filmcraft-platform = { workspace = true, features = ["vst3"] }
+serde_json = { workspace = true }

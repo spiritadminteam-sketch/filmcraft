@@ -186,8 +186,8 @@ fn slot_box(ui: &mut egui::Ui, r: Rect, text: &str, filled: bool, dim: bool, t: 
 
 /// The DSP-backed audio effects that can go in an insert slot.
 fn insert_effects() -> Vec<&'static filmcraft_project::EffectDef> {
-    filmcraft_project::effect_defs()
-        .iter()
+    filmcraft_project::all_effect_defs()
+        .into_iter()
         .filter(|d| d.kind == filmcraft_project::EffectKind::Audio && !d.intrinsic && filmcraft_render::audio_fx::supported(d.id))
         .collect()
 }

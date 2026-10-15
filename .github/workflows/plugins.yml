@@ -1,0 +1,116 @@
+# VST3 plug-in hosting checks (fork): keeps Cargo.lock in step with the new dependencies, then on
+# Linux and Windows builds the `vst3` crate's MIT example gain plug-in as a real `.vst3` bundle and
+# runs FilmCraft's plug-in host against it, plus the unit tests of every crate the feature touches.
+name: Plug-ins
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [motion-direct-manipulation]
+    paths:
+      - "crates/plugins/**"
+      - "crates/platform/**"
+      - "apps/filmcraft-plugin-host/**"
+      - "crates/render/src/audio_fx.rs"
+      - "crates/project/src/effect.rs"
+      - "crates/engine/src/plugins.rs"
+      - "Cargo.toml"
+      - ".github/workflows/plugins.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plugins-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  # the `vst3` crate's example plug-in, pinned
+  VST3_RS_REV: v0.3.0
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - id: push
+        name: Add the new dependencies to Cargo.lock (minimal update)
+        shell: bash
+        run: |
+          set -e
+          cargo tree -p filmcraft-plugin-host -e normal > /dev/null
+          if ! git diff --quiet Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "Cargo.lock: VST3 hosting dependencies (vst3, com-scrape-types)"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: lock
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.lock.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: plugins-${{ matrix.os }}
+          cache-on-failure: true
+      - name: Build the example gain plug-in (vst3-rs, MIT OR Apache-2.0)
+        shell: bash
+        run: |
+          set -e
+          git clone --depth 1 --branch "$VST3_RS_REV" https://github.com/coupler-rs/vst3-rs ../vst3-rs
+          (cd ../vst3-rs && cargo build --release --example gain)
+          mkdir -p ../vst3-test
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            mkdir -p ../vst3-test/Gain.vst3/Contents/x86_64-win
+            cp ../vst3-rs/target/release/examples/gain.dll ../vst3-test/Gain.vst3/Contents/x86_64-win/Gain.vst3
+          else
+            mkdir -p ../vst3-test/Gain.vst3/Contents/x86_64-linux
+            cp ../vst3-rs/target/release/examples/libgain.so ../vst3-test/Gain.vst3/Contents/x86_64-linux/Gain.so
+          fi
+          find ../vst3-test
+      - name: Format and lints (touched crates)
+        shell: bash
+        run: |
+          set -e
+          cargo fmt --all --check
+          cargo clippy --locked -p filmcraft-plugins -p filmcraft-plugin-host -p filmcraft-platform -p filmcraft-project -p filmcraft-render --all-targets --features filmcraft-platform/vst3 -- -D warnings
+      - name: Tests
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e +o pipefail
+          report() { msg=$(grep -E "^(error|warning: unused)|panicked|assertion|left:|right:|FAILED|^---- |^failures:|test result" -A4 "$1" | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=$2::$msg"; gh release create "test-log-${GITHUB_SHA::7}-plugins-${RUNNER_OS}-${GITHUB_RUN_ATTEMPT}" "$1" --prerelease --target "$GITHUB_SHA" --title "test log" --notes "failed: $2" -R "$GITHUB_REPOSITORY" || true; }
+          cargo build --locked -p filmcraft-plugin-host 2>&1 | tee host.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report host.log "plug-in host build"; exit $rc; fi
+          export FILMCRAFT_TEST_VST3="$(cd ../vst3-test && pwd)"
+          cargo test --locked -p filmcraft-plugins -p filmcraft-project --lib --tests -- --nocapture plug 2>&1 | tee plugins.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report plugins.log "plug-in tests"; exit $rc; fi
+          cargo test --locked -p filmcraft-plugins 2>&1 | tee plugins-all.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report plugins-all.log "plug-in crate tests"; exit $rc; fi
+          cargo test --locked -p filmcraft-platform --features vst3 --lib -- vst3host 2>&1 | tee platform.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report platform.log "platform vst3 tests"; exit $rc; fi
+          cargo test --locked -p filmcraft-render --lib -- audio_fx 2>&1 | tee render.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report render.log "render audio_fx tests"; exit $rc; fi
+          cargo test --locked -p filmcraft-engine --lib -- plugins audio_effects 2>&1 | tee engine.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report engine.log "engine tests"; exit $rc; fi
+          cargo run --locked -p xtask -- layers 2>&1 | tee layers.log; rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then report layers.log "layers"; exit $rc; fi

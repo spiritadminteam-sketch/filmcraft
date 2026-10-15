@@ -1,0 +1,17 @@
+[package]
+name = "filmcraft-plugins"
+description = "FilmCraft third-party audio plug-ins (VST3): scanning, the effect registry and the pipe client of the separate plug-in host process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+filmcraft-audio-dsp = { workspace = true }
+filmcraft-project = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

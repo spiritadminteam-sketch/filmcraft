@@ -34,6 +34,7 @@ pub mod narration;
 pub mod panels;
 pub mod paste_media;
 pub mod perf;
+pub mod plugins;
 pub mod presets;
 pub mod previews;
 pub mod project_manager;
@@ -458,6 +459,7 @@ impl Default for Session {
 
 impl Session {
     pub fn new(services: Arc<dyn Services>) -> Self {
+        plugins::ensure_init();
         Self {
             project: Arc::new(Project::new("Untitled")),
             history: History { limit: 200, ..Default::default() },

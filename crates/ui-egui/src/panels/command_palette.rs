@@ -123,7 +123,7 @@ pub fn entries(app: &FilmcraftApp) -> Vec<Entry> {
             action: Action::Command(c.id.to_string()),
         });
     }
-    for e in filmcraft_project::effect_defs() {
+    for e in filmcraft_project::all_effect_defs() {
         if e.intrinsic || !matches!(e.kind, EffectKind::Video | EffectKind::Audio) {
             continue;
         }

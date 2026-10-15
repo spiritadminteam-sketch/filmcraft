@@ -858,13 +858,52 @@ pub fn effect_defs() -> &'static [EffectDef] {
 }
 
 pub fn find_effect(id: &str) -> Option<&'static EffectDef> {
-    effect_defs().iter().find(|e| e.id == id)
+    effect_defs().iter().find(|e| e.id == id).or_else(|| plugin_effect_defs().into_iter().find(|e| e.id == id))
 }
 
 /// Case-insensitive lookup by id or display name.
 pub fn find_effect_by_name(name: &str) -> Option<&'static EffectDef> {
     let n = name.to_ascii_lowercase();
-    effect_defs().iter().find(|e| e.id == n || e.name.to_ascii_lowercase() == n)
+    effect_defs()
+        .iter()
+        .find(|e| e.id == n || e.name.to_ascii_lowercase() == n)
+        .or_else(|| plugin_effect_defs().into_iter().find(|e| e.id.eq_ignore_ascii_case(&n) || e.name.to_ascii_lowercase() == n))
+}
+
+fn plugin_registry() -> &'static std::sync::RwLock<Vec<&'static EffectDef>> {
+    static R: OnceLock<std::sync::RwLock<Vec<&'static EffectDef>>> = OnceLock::new();
+    R.get_or_init(Default::default)
+}
+
+/// Make third-party plug-in effects (VST3, found by a plug-in scan) available next to the built-in
+/// ones: the Effects panel, `effects.apply`, Effect Controls and the MCP schema all read them.
+/// Replaces the previous set. A definition equal to one registered before is reused, so repeated
+/// scans do not grow memory (definitions are `'static`, like the built-in ones).
+pub fn register_plugin_effects(defs: Vec<EffectDef>) {
+    let mut reg = plugin_registry().write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let old = std::mem::take(&mut *reg);
+    let mut new = Vec::with_capacity(defs.len());
+    for d in defs {
+        // ids are unique; built-in ids are never shadowed
+        if effect_defs().iter().any(|e| e.id == d.id) || new.iter().any(|e: &&EffectDef| e.id == d.id) {
+            continue;
+        }
+        match old.iter().find(|e| ***e == d) {
+            Some(e) => new.push(*e),
+            None => new.push(&*Box::leak(Box::new(d))),
+        }
+    }
+    *reg = new;
+}
+
+/// The registered plug-in effect definitions (see [`register_plugin_effects`]).
+pub fn plugin_effect_defs() -> Vec<&'static EffectDef> {
+    plugin_registry().read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+/// Built-in and plug-in effect definitions.
+pub fn all_effect_defs() -> Vec<&'static EffectDef> {
+    effect_defs().iter().chain(plugin_effect_defs()).collect()
 }
 
 /// Intrinsic video effects every video track item carries (Motion, Opacity, Time Remapping).
@@ -891,5 +930,42 @@ mod tests {
         assert!(effect_defs().len() > 90);
         assert_eq!(find_effect_by_name("Gaussian Blur").unwrap().id, "gaussian_blur");
         assert_eq!(intrinsic_video().len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod plugin_registry_tests {
+    use super::*;
+
+    fn plugin_def(id: &'static str, name: &'static str) -> EffectDef {
+        EffectDef {
+            id,
+            name,
+            kind: EffectKind::Audio,
+            category: &["Audio Effects", "VST3"],
+            params: vec![fs("p0", "Gain", 100.0, (0.0, 100.0), (0.0, 100.0), "%", 1)],
+            intrinsic: false,
+            accelerated: false,
+            float32: false,
+            yuv: false,
+        }
+    }
+
+    #[test]
+    fn plug_in_effects_are_found_next_to_built_in_ones() {
+        let before = all_effect_defs().len();
+        register_plugin_effects(vec![plugin_def("vst3:test-gain", "Test Gain"), plugin_def("amplify", "Shadow")]);
+        let d = find_effect("vst3:test-gain").expect("registered");
+        assert_eq!(d.name, "Test Gain");
+        assert_eq!(find_effect_by_name("test gain").map(|d| d.id), Some("vst3:test-gain"));
+        // a built-in id is never shadowed
+        assert_ne!(find_effect("amplify").map(|d| d.name), Some("Shadow"));
+        assert_eq!(all_effect_defs().len(), before + 1);
+        // re-registering the same definition reuses it
+        register_plugin_effects(vec![plugin_def("vst3:test-gain", "Test Gain")]);
+        assert!(std::ptr::eq(find_effect("vst3:test-gain").expect("again"), d));
+        assert_eq!(d.instance().params.len(), 1);
+        register_plugin_effects(Vec::new());
+        assert!(find_effect("vst3:test-gain").is_none());
     }
 }

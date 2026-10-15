@@ -22,11 +22,11 @@ Design principles:
 ## 1. Layers
 
 ```text
- L6  apps/filmcraft · apps/filmcraft-cli · apps/filmcraft-web
+ L6  apps/filmcraft · apps/filmcraft-cli · apps/filmcraft-web · apps/filmcraft-plugin-host
  L5  ui-egui · automation · platform
  L4  engine
  L3  render · gpu · export · golden (test-only)
- L2  edit · codecs · interchange · captions · speech · tts · tts-text
+ L2  edit · codecs · interchange · captions · speech · tts · tts-text · plugins
  L1  frame · media · project · audio-dsp · text
  L0  foundation: time · geom · color · bitstream · testkit (dev-dependency only)
      codecs/containers: isobmff · matroska · mxf · cfb · mpegts · ogg · h264 · h264enc · hevc · vp9 · av1 · mpeg2v · prores · dnx · apv · aac · ac3 · opus
@@ -63,6 +63,7 @@ and `filmcraft-cli`.
 | `audio-dsp` | L1 | loudness metering (BS.1770 / R128), audio effects, channel layouts (BS.775 up/downmix, 5.1 panner), music remix analysis; no dependencies |
 | `text` | L1 | text engine: font database (bundled OFL fonts + system fonts), shaping (harfrust), bidi, line breaking, paragraph layout, glyph/path rasteriser, strokes ([crates/text/README.md](../crates/text/README.md)) |
 | `edit` | L2 | pure edit algebra (insert, overwrite, razor, ripple, roll, slip, slide, rate stretch…; text-based editing: `edit::transcript`) |
+| `plugins` | L2 | third-party audio plug-ins (VST3): scan cache, effect registration, the pipe protocol and client of the plug-in host process ([ADR 0002](adr/0002-plugin-hosting.md)) |
 | `speech` | L2 | speech-to-text: `Transcriber` trait, Whisper model catalogue + verified downloader (feature `download`), pure-Rust Whisper inference on candle with word timestamps (feature `whisper`), speaker labelling ([transcripts.md](transcripts.md)) |
 | `tts` | L2 | text to speech: `Voice` trait, voice catalogue, pause markers, built-in formant voices; Kokoro-82M natural voices on candle and their pinned package catalogue (feature `kokoro`). Same-layer edge to `tts-text` |
 | `tts-text` | L2 | text front end for narration: normalizer (numbers, money, dates, acronyms, pauses) and English pronunciation (CMUdict + letter-to-sound) to Kokoro phonemes |
@@ -78,6 +79,7 @@ and `filmcraft-cli`.
 | `automation` | L5 | MCP server (`rmcp`, stdio), headless or bridged to the running app |
 | `platform` | L5 | OS media FFI only: hardware video decoding (VideoToolbox H.264 / HEVC on macOS; Media Foundation / Direct3D 11 H.264 / HEVC / VP9 / AV1 on Windows; VA-API H.264 / HEVC on Linux, with our own parsers and DPBs driving the stateless hardware; a no-op elsewhere) behind `codecs::VideoDecoder`, with transparent fallback to our decoders, and hardware H.264 encoding (VideoToolbox, opt-in) and H.265 encoding (VideoToolbox, the only H.265 encoder; the format exists only where a hardware encoder does) and NVIDIA NVENC H.264 (Windows and 64-bit Linux, opt-in) and H.265 (Windows, FilmCraft's only H.265 encoder there) encoding behind `export::VideoEncoder`; H.264 declines to the built-in encoder for what the hardware does not take. The one crate allowed `unsafe` ([ADR 0001](adr/0001-platform-ffi.md), [README](../crates/platform/README.md)) |
 | `filmcraft` | L6 | desktop binary: eframe/wgpu window, cpal audio output, file dialogs, native macOS menu, TCP control server |
+| `filmcraft-plugin-host` | L6 | helper process that runs VST3 plug-ins for FilmCraft, so a crashing plug-in never takes the editor down ([ADR 0002](adr/0002-plugin-hosting.md)) |
 | `filmcraft-cli` | L6 | headless CLI: `exec`, `run`, `inspect`, `describe`, `commands`, `import`, `export`, `render`, `probe`, `mcp`; `--bridge` targets the running app |
 | `filmcraft-web` | L6 | the browser app (wasm32): eframe web runner on WebGPU/WebGL2, Blob-backed services, OPFS recovery, WebAudio, WebCodecs, `window.filmcraft` API ([web.md](web.md)) |
 

@@ -31,6 +31,15 @@ filmcraft-hevc = { workspace = true }
 filmcraft-isobmff = { workspace = true }
 filmcraft-time = { workspace = true }
 log = { workspace = true }
+# VST3 hosting (feature `vst3`, only the plug-in host helper enables it; ADR 0002)
+vst3 = { version = "0.3", optional = true }
+# Linux: libva (VA-API) is loaded at run time with libloading (ISC; already in the lockfile through
+# wgpu), so building needs no libva headers and a system without libva simply decodes in software.
+# VST3 modules are loaded with it too.
+libloading = "0.8"
+
+[features]
+vst3 = ["dep:vst3"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = "0.3.2"
@@ -53,10 +62,6 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# Linux: libva (VA-API) is loaded at run time with libloading (ISC; already in the lockfile through
-# wgpu), so building needs no libva headers and a system without libva simply decodes in software.
-[target.'cfg(target_os = "linux")'.dependencies]
-libloading = "0.8"
 
 [dev-dependencies]
 filmcraft-testkit = { workspace = true }

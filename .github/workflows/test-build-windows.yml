@@ -63,10 +63,10 @@ jobs:
           FILMCRAFT_REQUIRE_WINRES: "1"
         run: |
           set +e +o pipefail
-          cargo build --release --locked -p filmcraft -p filmcraft-cli --features filmcraft/whisper,filmcraft-cli/whisper --target x86_64-pc-windows-msvc 2>&1 | tee build.log; rc=${PIPESTATUS[0]}
+          cargo build --release --locked -p filmcraft -p filmcraft-cli -p filmcraft-plugin-host --features filmcraft/whisper,filmcraft-cli/whisper --target x86_64-pc-windows-msvc 2>&1 | tee build.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then msg=$(grep -E "^error" -A6 build.log | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=build::$msg"; exit $rc; fi
           mkdir -p dist
-          cp target/x86_64-pc-windows-msvc/release/filmcraft.exe target/x86_64-pc-windows-msvc/release/filmcraft-cli.exe dist/
+          cp target/x86_64-pc-windows-msvc/release/filmcraft.exe target/x86_64-pc-windows-msvc/release/filmcraft-cli.exe target/x86_64-pc-windows-msvc/release/filmcraft-plugin-host.exe dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: filmcraft-windows-x64-${{ github.sha }}
@@ -78,6 +78,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="test-build-${GITHUB_SHA::7}"
-          7z a filmcraft-test-windows-x64.zip ./dist/filmcraft.exe ./dist/filmcraft-cli.exe
+          7z a filmcraft-test-windows-x64.zip ./dist/filmcraft.exe ./dist/filmcraft-cli.exe ./dist/filmcraft-plugin-host.exe
           gh release create "$tag" filmcraft-test-windows-x64.zip --prerelease --target "$GITHUB_SHA" \
             --title "Test build $tag" --notes "Unsigned test build of ${GITHUB_REF_NAME} (${GITHUB_SHA})." -R "$GITHUB_REPOSITORY"

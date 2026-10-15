@@ -175,8 +175,10 @@ platforms** G4, G9, G17; **performance** G16; **ecosystem** G11; **measurement**
 
 ## G11. No plugin hosting
 
-- **Missing:** VST3 / Audio Units, OpenFX, Premiere / After Effects plug-in APIs, UXP panels
-  (#325).
+- **Have (fork, [ADR 0002](adr/0002-plugin-hosting.md)):** VST3 audio effects on Windows and
+  Linux, hosted in a separate process (`filmcraft-plugin-host`); parameters as keyframeable sliders.
+- **Missing:** VST3 editor windows and state, instruments, macOS VST3, Audio Units, OpenFX,
+  Premiere / After Effects plug-in APIs, UXP panels (#325).
 - **Impact:** many professional editors depend on third-party effects and audio plug-ins.
 - **Needs:** an owner decision (FFI under the `unsafe` rule, AGENTS.md §0.3). **200–400 h.**
 

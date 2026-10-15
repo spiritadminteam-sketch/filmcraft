@@ -29,7 +29,66 @@ fn f(e: &EffectInstance, id: &str, mt: Tick) -> f32 {
     e.f64_at(id, mt) as f32
 }
 
+/// Creates the processor of a third-party plug-in effect (`vst3:…` ids): set once at startup by
+/// the engine (`filmcraft-plugins`), which runs plug-ins in a separate helper process.
+pub type ExternalFactory = fn(effect_id: &str, sample_rate: f32, channels: usize) -> Option<Box<dyn AudioEffect>>;
+
+static EXTERNAL: OnceLock<ExternalFactory> = OnceLock::new();
+
+/// Register the plug-in effect factory (first call wins).
+pub fn set_external_factory(f: ExternalFactory) {
+    let _ = EXTERNAL.set(f);
+}
+
+/// Whether `id` names a third-party plug-in effect.
+pub fn is_plugin_effect(id: &str) -> bool {
+    id.starts_with("vst3:")
+}
+
+/// A processor that leaves the audio unchanged: stands in for a plug-in that cannot run (no
+/// factory, plug-in missing or crashed), so the chain keeps one processor per effect.
+struct Passthrough(&'static str);
+
+impl AudioEffect for Passthrough {
+    fn id(&self) -> &'static str {
+        self.0
+    }
+    fn params(&self) -> &'static [filmcraft_audio_dsp::ParamSpec] {
+        &[]
+    }
+    fn set_param(&mut self, _id: &str, _value: f32) -> bool {
+        false
+    }
+    fn param(&self, _id: &str) -> Option<f32> {
+        None
+    }
+    fn reset(&mut self) {}
+    fn process(&mut self, _channels: &mut [&mut [f32]]) {}
+}
+
+/// The DSP processor `dsp` (a built-in DSP id, or a plug-in effect id).
+pub(crate) fn create(dsp: &'static str, sample_rate: f32, channels: usize) -> Option<Box<dyn AudioEffect>> {
+    if is_plugin_effect(dsp) {
+        let made = EXTERNAL.get().and_then(|f| f(dsp, sample_rate, channels));
+        return Some(made.unwrap_or_else(|| Box::new(Passthrough(dsp))));
+    }
+    filmcraft_audio_dsp::create_effect(dsp, sample_rate, channels)
+}
+
+/// Copy every plug-in parameter (as the project keyframes it) to the plug-in processor.
+fn plugin_apply(d: &mut dyn AudioEffect, e: &EffectInstance, t: Tick) {
+    let Some(def) = e.def() else { return };
+    for p in &def.params {
+        let v = e.params.get(p.id).map_or_else(|| p.default.as_f64().unwrap_or(0.0), |q| q.scalar_at(t));
+        set_if_changed(d, p.id, v as f32);
+    }
+}
+
 pub(crate) fn mapping(id: &str) -> Option<Mapping> {
+    if is_plugin_effect(id) {
+        let def = filmcraft_project::find_effect(id)?;
+        return Some(Mapping { dsp: def.id, preroll: |_, _| 0.25, apply: plugin_apply });
+    }
     Some(match id {
         "amplify" => Mapping { dsp: "amplify", preroll: |_, _| 0.0, apply: |d, e, t| ignore(d.set_param("gain", f(e, "gain", t))) },
         "dynamics" => Mapping {
@@ -266,13 +325,17 @@ fn direct(d: &mut dyn AudioEffect, e: &EffectInstance, t: Tick) {
 /// effect editors: [`AudioEffect::response_db`] / [`AudioEffect::transfer_db`]).
 pub fn configured(e: &EffectInstance, t: Tick, sample_rate: u32) -> Option<Box<dyn AudioEffect>> {
     let m = mapping(&e.effect)?;
-    let mut d = filmcraft_audio_dsp::create_effect(m.dsp, sample_rate as f32, 2)?;
+    let mut d = create(m.dsp, sample_rate as f32, 2)?;
     (m.apply)(d.as_mut(), e, t);
     Some(d)
 }
 
 /// Processing latency (samples) of a project audio effect at `sample_rate`.
 pub fn latency(effect_id: &str, sample_rate: u32) -> usize {
+    if is_plugin_effect(effect_id) {
+        // known only once an instance runs; reported by the instance itself
+        return 0;
+    }
     mapping(effect_id).and_then(|m| filmcraft_audio_dsp::create_effect(m.dsp, sample_rate as f32, 2)).map_or(0, |d| d.latency())
 }
 
@@ -373,7 +436,7 @@ pub fn process(item: &TrackItem, a0: i64, n: usize, sr: u32, read: &dyn Fn(i64, 
             let pre = (pre_s * sr as f64).ceil() as usize;
             let mut fx: Vec<Box<dyn AudioEffect>> = Vec::new();
             for (_, m) in &act {
-                if let Some(d) = filmcraft_audio_dsp::create_effect(m.dsp, sr as f32, width) {
+                if let Some(d) = create(m.dsp, sr as f32, width) {
                     fx.push(d);
                 }
             }
@@ -418,6 +481,40 @@ mod tests {
             assert!(l.iter().chain(&r).all(|v| v.is_finite()), "{}", d.id);
         }
         assert_eq!(filmcraft_project::effect::PREMIERE_AUDIO_EFFECTS.len(), 53);
+    }
+
+    #[test]
+    fn plugin_effects_map_and_pass_through_without_a_host() {
+        use filmcraft_project::{EffectDef, ParamDef, ParamValue};
+        let def = EffectDef {
+            id: "vst3:render-test",
+            name: "Render Test Plug-in",
+            kind: EffectKind::Audio,
+            category: &["Audio Effects", "VST3"],
+            params: vec![ParamDef {
+                id: "p0",
+                label: "Gain",
+                kind: ParamKind::Float { min: 0.0, max: 100.0, soft_min: 0.0, soft_max: 100.0, unit: "%", decimals: 1 },
+                default: ParamValue::Float(50.0),
+                animatable: true,
+                group: None,
+            }],
+            intrinsic: false,
+            accelerated: false,
+            float32: false,
+            yuv: false,
+        };
+        filmcraft_project::register_plugin_effects(vec![def]);
+        assert!(supported("vst3:render-test"));
+        assert!(!supported("vst3:not-registered"));
+        let inst = filmcraft_project::find_effect("vst3:render-test").unwrap().instance();
+        // no plug-in host in unit tests: the effect leaves the audio as it is
+        let mut fx = configured(&inst, Tick::ZERO, 48000).unwrap();
+        let mut l = vec![0.25f32; 64];
+        let mut r = vec![-0.5f32; 64];
+        fx.process(&mut [&mut l, &mut r]);
+        assert!(l.iter().all(|v| *v == 0.25) && r.iter().all(|v| *v == -0.5));
+        assert_eq!(latency("vst3:render-test", 48000), 0);
     }
 
     #[test]

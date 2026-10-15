@@ -190,6 +190,13 @@ fn main() -> eframe::Result {
                     Err(e) => log::error!("recovery failed: {e}"),
                 }
             }
+            // VST3 plug-ins: look through the system's VST3 folders once, in the background, the
+            // first time (later: "Scan for Audio Plug-ins" in the Command Palette)
+            if filmcraft_plugins::scanned_folders().is_empty() && filmcraft_plugins::client::host_exe().is_some() {
+                if let Err(e) = session.execute("plugins.scan", json!({})) {
+                    log::warn!("plug-in scan: {e}");
+                }
+            }
             let mut app = FilmcraftApp::new(session);
             if recover == Some(false) {
                 app.dialog = None;
