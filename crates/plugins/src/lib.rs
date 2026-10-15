@@ -321,11 +321,13 @@ mod tests {
 
     #[test]
     fn duplicate_names_get_the_vendor() {
-        let a = info("Compressor", &"01".repeat(16));
+        // a plug-in named like a built-in effect
+        let builtin = filmcraft_project::find_effect("amplify").unwrap().name;
+        let a = info(builtin, &"01".repeat(16));
         let b = info("Shiny", &"02".repeat(16));
-        let n = names(&[a, b]);
-        // "Compressor" is also a built-in effect name
-        assert_eq!(n, vec!["Compressor (Acme)".to_string(), "Shiny".to_string()]);
+        let c = info("Shiny", &"03".repeat(16));
+        let n = names(&[a, b, c]);
+        assert_eq!(n, vec![format!("{builtin} (Acme)"), "Shiny (Acme)".to_string(), "Shiny (Acme)".to_string()]);
     }
 
     #[test]

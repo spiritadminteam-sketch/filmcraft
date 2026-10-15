@@ -9,6 +9,10 @@
 //! VST3 SDK headers (MIT since SDK 3.8). Everything public here is safe; the `unsafe` FFI calls
 //! are contained in this module, each with a `// SAFETY:` comment.
 
+// VST3's enum constants are `i32` on Windows and `u32` elsewhere: the casts are needed on one
+// system and redundant on the other.
+#![allow(clippy::unnecessary_cast)]
+
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -172,16 +176,16 @@ impl Module {
         // `moduleinit`): `InitDll()` / `ModuleEntry(handle)` return a bool.
         unsafe {
             #[cfg(target_os = "windows")]
-            if let Ok(init) = lib.get::<unsafe extern "system" fn() -> bool>(b"InitDll\0") {
-                if !init() {
-                    return Err(format!("{}: InitDll failed", bin.display()));
-                }
+            if let Ok(init) = lib.get::<unsafe extern "system" fn() -> bool>(b"InitDll\0")
+                && !init()
+            {
+                return Err(format!("{}: InitDll failed", bin.display()));
             }
             #[cfg(not(target_os = "windows"))]
-            if let Ok(init) = lib.get::<unsafe extern "system" fn(*mut c_void) -> bool>(b"ModuleEntry\0") {
-                if !init(std::ptr::null_mut()) {
-                    return Err(format!("{}: ModuleEntry failed", bin.display()));
-                }
+            if let Ok(init) = lib.get::<unsafe extern "system" fn(*mut c_void) -> bool>(b"ModuleEntry\0")
+                && !init(std::ptr::null_mut())
+            {
+                return Err(format!("{}: ModuleEntry failed", bin.display()));
             }
         }
         // SAFETY: `GetPluginFactory` is the VST3 factory entry point: no arguments, returns an
@@ -359,10 +363,10 @@ impl IBStreamTrait for MemStream {
     }
     unsafe fn seek(&self, pos: int64, mode: int32, result: *mut int64) -> tresult {
         let len = self.data.borrow().len() as i64;
-        let base = match mode as u32 {
-            m if m == IBStream_::IStreamSeekMode_::kIBSeekSet as u32 => 0,
-            m if m == IBStream_::IStreamSeekMode_::kIBSeekCur as u32 => self.pos.get() as i64,
-            m if m == IBStream_::IStreamSeekMode_::kIBSeekEnd as u32 => len,
+        let base = match i64::from(mode) {
+            m if m == IBStream_::IStreamSeekMode_::kIBSeekSet as i64 => 0,
+            m if m == IBStream_::IStreamSeekMode_::kIBSeekCur as i64 => self.pos.get() as i64,
+            m if m == IBStream_::IStreamSeekMode_::kIBSeekEnd as i64 => len,
             _ => return kInvalidArgument,
         };
         let p = base.saturating_add(pos).clamp(0, len);
@@ -553,14 +557,14 @@ impl Instance {
         } else {
             let mut tuid: TUID = [0; 16];
             // SAFETY: `tuid` is a writable 16-byte id.
-            if unsafe { self.comp.getControllerClassId(&mut tuid) } == kResultOk {
-                if let Some(c) = module.create::<IEditController>(&tuid_bytes(&tuid)) {
-                    // SAFETY: as for the component.
-                    if unsafe { c.initialize(host_ptr) } == kResultOk {
-                        self.ctrl = Some(c);
-                        self.separate_ctrl = true;
-                    }
-                }
+            // SAFETY: `tuid` is a writable 16-byte id.
+            if unsafe { self.comp.getControllerClassId(&mut tuid) } == kResultOk
+                && let Some(c) = module.create::<IEditController>(&tuid_bytes(&tuid))
+                // SAFETY: as for the component.
+                && unsafe { c.initialize(host_ptr) } == kResultOk
+            {
+                self.ctrl = Some(c);
+                self.separate_ctrl = true;
             }
         }
         let Some(ctrl) = &self.ctrl else { return };
@@ -810,10 +814,10 @@ impl Drop for Instance {
                 a.disconnect(b.as_ptr());
                 b.disconnect(a.as_ptr());
             }
-            if let Some(c) = self.ctrl.take() {
-                if self.separate_ctrl {
-                    c.terminate();
-                }
+            if let Some(c) = self.ctrl.take()
+                && self.separate_ctrl
+            {
+                c.terminate();
             }
             self.comp.terminate();
         }
