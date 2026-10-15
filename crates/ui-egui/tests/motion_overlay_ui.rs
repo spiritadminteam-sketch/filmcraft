@@ -198,3 +198,17 @@ fn click_in_the_picture_selects_the_clip() {
     assert!(sel.as_array().is_some_and(|s| s.iter().any(|c| c.as_u64() == Some(clip.id))), "the clip under the pointer is selected: {sel}");
     assert!(d.find("program.motion.box").is_some(), "and has its box");
 }
+
+/// A click on the Program monitor around the picture lets go of the selected clip (its box goes).
+#[test]
+fn a_click_around_the_picture_deselects_the_clip() {
+    let (mut d, _clip) = Driver::demo();
+    assert!(d.find("program.motion.box").is_some());
+    let pic = d.rect("program.picture");
+    let panel = d.rect("panel.Program");
+    let outside = if pic[0] - panel[0] > 20.0 { (pic[0] - 8.0, pic[1] + pic[3] / 2.0) } else { (pic[0] + pic[2] / 2.0, pic[1] + pic[3] + 8.0) };
+    d.ok("ui.click", json!({"x": outside.0, "y": outside.1}));
+    d.frames(4);
+    assert!(d.harness.state().session.state.selection.is_empty(), "deselected");
+    assert!(d.find("program.motion.box").is_none(), "no box");
+}

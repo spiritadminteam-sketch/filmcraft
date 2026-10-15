@@ -283,6 +283,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     // in the picture the overlays do that). Under the picture and the overlays, so they come first.
     if which == Which::Program && show_picture && ui.interact(video_area, egui::Id::new((prefix, "background")), Sense::click()).clicked() {
         crate::panels::graphics::deselect_on_monitor(app, ui);
+        // and of the selected clips, whose Motion box the picture shows, as in Premiere
+        if !app.session.state.selection.is_empty()
+            && let Err(e) = app.session.execute("timeline.select", serde_json::json!({"clips": []}))
+        {
+            app.ui.status = e.to_string();
+        }
     }
     // Click/drag in the picture: the Hand tool pans a magnified picture, otherwise focus.
     let pic_resp = ui.interact(pic, egui::Id::new((prefix, "pic")), if show_picture { Sense::click_and_drag() } else { Sense::hover() });
