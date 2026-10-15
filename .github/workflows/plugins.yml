@@ -27,8 +27,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
-  # the `vst3` crate's example plug-in, pinned
-  VST3_RS_REV: v0.3.0
+  # the `vst3` crate's example plug-in, pinned (vst3 0.3.0)
+  VST3_RS_REV: b2a45f2d40e602eff5a224b41613735388868590
 
 jobs:
   lock:
@@ -75,7 +75,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          git clone --depth 1 --branch "$VST3_RS_REV" https://github.com/coupler-rs/vst3-rs ../vst3-rs
+          git clone https://github.com/coupler-rs/vst3-rs ../vst3-rs
+          git -C ../vst3-rs checkout --quiet "$VST3_RS_REV"
           (cd ../vst3-rs && cargo build --release --example gain)
           mkdir -p ../vst3-test
           if [ "$RUNNER_OS" = "Windows" ]; then
