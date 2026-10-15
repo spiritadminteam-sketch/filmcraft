@@ -5,8 +5,6 @@
 //! (MIT OR Apache-2.0; built by CI as `Gain.vst3`) and `filmcraft-plugin-host` built next to the
 //! test binary (`cargo build -p filmcraft-plugin-host`). Skipped otherwise.
 
-use filmcraft_audio_dsp::AudioEffect;
-
 /// The scans share the process-wide plug-in list: one test at a time.
 static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -89,7 +87,7 @@ fn a_module_that_is_not_a_plug_in_is_reported_not_fatal() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("Broken.vst3"), b"this is not a library").unwrap();
-    let report = filmcraft_plugins::scan(&[dir.clone()], &mut |_, _, _| {});
+    let report = filmcraft_plugins::scan(std::slice::from_ref(&dir), &mut |_, _, _| {});
     assert_eq!(report.modules, 1);
     assert!(report.plugins.is_empty());
     assert_eq!(report.failed.len(), 1, "{:?}", report.failed);

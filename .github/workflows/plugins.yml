@@ -88,6 +88,9 @@ jobs:
           fi
           find ../vst3-test
       - name: Format and lints (touched crates)
+        # (the tests still run when this fails, so one round trip shows both)
+        continue-on-error: true
+        id: lint
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,3 +123,7 @@ jobs:
           if [ $rc -ne 0 ]; then report engine.log "engine tests"; exit $rc; fi
           cargo run --locked -p xtask -- layers 2>&1 | tee layers.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report layers.log "layers"; exit $rc; fi
+      - name: Lints failed
+        if: steps.lint.outcome == 'failure'
+        shell: bash
+        run: exit 1
