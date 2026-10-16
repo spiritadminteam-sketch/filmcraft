@@ -89,7 +89,7 @@ fn gif_animation(bytes: &[u8]) -> Option<(Vec<(Tick, u32, u32, Vec<u8>)>, Tick)>
     for f in dec.into_frames() {
         let Ok(f) = f else { break };
         let (num, den) = f.delay().numer_denom_ms();
-        let ms = if den == 0 { 0 } else { num / den };
+        let ms = num.checked_div(den).unwrap_or(0);
         let buf = f.into_buffer();
         let (w, h) = buf.dimensions();
         total = total.saturating_add(buf.as_raw().len());
