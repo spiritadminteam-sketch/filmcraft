@@ -7,7 +7,7 @@ use std::sync::mpsc::{Sender, channel};
 
 use egui_kittest::Harness;
 use filmcraft_engine::Session;
-use filmcraft_project::{Label, Marker};
+use filmcraft_project::Marker;
 use filmcraft_time::Tick;
 use filmcraft_ui_egui::FilmcraftApp;
 use filmcraft_ui_egui::control::ControlRequest;
