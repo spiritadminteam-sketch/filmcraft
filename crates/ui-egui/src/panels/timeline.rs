@@ -949,6 +949,8 @@ fn request_sequence_peaks(app: &mut FilmcraftApp, item: ItemId) -> Option<Arc<Ve
     let project = app.session.project.clone();
     let provider = app.session.media.provider(project.clone(), app.session.services.clone());
     let run = move || {
+        // one waveform job at a time, so opening a project doesn't starve playback
+        let _turn = super::waveform_cache::turn();
         // a panic in the mix must not take the app down with it, nor leave the item pending for good
         let mixed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let seq = project.sequence(item)?;
@@ -1029,9 +1031,33 @@ pub(crate) fn request_peaks(app: &mut FilmcraftApp, item: ItemId, stream: usize)
     let peaks = app.tl.peaks.clone();
     let pending = app.tl.peaks_pending.clone();
     let dur = src.info().duration;
+    // a media file's peaks are kept in the media cache, and worked out through a reader of their
+    // own, so a fresh open neither decodes everything again nor fights playback for the decoders
+    let file = app.session.project.item(item).and_then(|i| i.as_media()).and_then(|m| match &m.media {
+        filmcraft_project::MediaRef::File { path } if !m.offline => Some(path.clone()),
+        _ => None,
+    });
+    let cache = if cfg!(target_arch = "wasm32") { None } else { app.session.media_cache_dir() };
+    let cached = file.as_deref().zip(cache.as_deref()).and_then(|(f, c)| super::waveform_cache::cache_path(c, f, stream));
+    let (media, services) = (app.session.media.clone(), app.session.services.clone());
     let run = move || {
-        let out = source_peaks(&*src, stream, dur);
-        peaks.lock().unwrap_or_else(|e| e.into_inner()).insert(pkey, Arc::new(out));
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(p) = cached.as_deref().and_then(super::waveform_cache::read) {
+                return p;
+            }
+            let _turn = super::waveform_cache::turn();
+            let own = file.as_deref().and_then(|f| media.open_file(f, &*services).ok());
+            let out = source_peaks(own.as_deref().unwrap_or(&*src), stream, dur);
+            if let Some(c) = cached.as_deref()
+                && !out.is_empty()
+            {
+                super::waveform_cache::write(c, &out);
+            }
+            out
+        }));
+        if let Ok(out) = out {
+            peaks.lock().unwrap_or_else(|e| e.into_inner()).insert(pkey, Arc::new(out));
+        }
         pending.lock().unwrap_or_else(|e| e.into_inner()).retain(|i| *i != pkey);
     };
     #[cfg(not(target_arch = "wasm32"))]

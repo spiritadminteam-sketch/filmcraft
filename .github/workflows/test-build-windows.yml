@@ -49,13 +49,13 @@ jobs:
           report() { msg=$(grep -E "^(error|warning: unused)|panicked|assertion|left:|right:|FAILED|^---- |^failures:|test result" -A4 "$1" | head -150 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=$2::$msg"; gh release create "test-log-${GITHUB_SHA::7}-${GITHUB_RUN_ATTEMPT}" "$1" --prerelease --target "$GITHUB_SHA" --title "test log" --notes "failed: $2" -R "$GITHUB_REPOSITORY" || true; }
           cargo test --locked -p filmcraft-edit 2>&1 | tee edit.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report edit.log "edit tests"; exit $rc; fi
-          cargo clippy --locked -p filmcraft-media --all-targets -- -D warnings 2>&1 | tee media-lint.log; rc=${PIPESTATUS[0]}
+          cargo clippy --locked -p filmcraft-media -p filmcraft-ui-egui --all-targets -- -D warnings 2>&1 | tee media-lint.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report media-lint.log "media clippy"; exit $rc; fi
           cargo test --locked -p filmcraft-media --lib -- still 2>&1 | tee media.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report media.log "media tests"; exit $rc; fi
           cargo test --locked -p filmcraft-engine --lib -- sequence_tools marker ultra_key 2>&1 | tee engine.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report engine.log "engine tests"; exit $rc; fi
-          cargo test --locked -p filmcraft-ui-egui --lib -- effect_controls motion_overlay timeline i18n command_palette 2>&1 | tee lib.log; rc=${PIPESTATUS[0]}
+          cargo test --locked -p filmcraft-ui-egui --lib -- effect_controls motion_overlay timeline i18n command_palette waveform_cache 2>&1 | tee lib.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report lib.log "lib tests"; exit $rc; fi
           cargo test --locked -p filmcraft-ui-egui --test keyframe_zoom_ui --test keyframes_ui --test motion_overlay_ui --test keyframe_select_ui --test marker_edit_ui --test command_palette_ui --test sequence_ui --test transitions_ui --test timeline_gap_ui --test deselect_ui --test graphics_ui --test graphics_handles_ui --test masks_ui 2>&1 | tee ui.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report ui.log "ui tests"; exit $rc; fi
