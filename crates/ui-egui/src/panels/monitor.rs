@@ -199,6 +199,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
             app.frames.schedule_playback(key, rate, scale, &project, speed, preroll);
             if preroll {
                 app.playback.preroll_ready = app.frames.preroll_ready(key, app.playback.speed, rate.frame_at(duration) - 1);
+                app.playback.preroll_first = app.frames.is_ready(&key);
             }
         } else {
             app.frames.request(key, rate.tick_of(frame), scale, &project, 0);

@@ -218,6 +218,9 @@ pub struct Playback {
     /// s; negative = not yet stamped), and whether the Program monitor has them ready.
     pub preroll: Option<f64>,
     pub preroll_ready: bool,
+    /// The Program monitor has the frame at the playhead (the clock may start without the rest
+    /// of the preroll once [`frames::PREROLL_TIMEOUT_S`] passed, never before this one).
+    pub preroll_first: bool,
     /// The window was hidden (occluded/minimized) since the monitor last refreshed.
     pub hidden: bool,
     /// Forward playback stops here (Play In to Out, Play from Playhead to Out Point).
@@ -881,6 +884,7 @@ impl FilmcraftApp {
         self.playback.anchor_time = -1.0; // set when the preroll ends
         self.playback.preroll = Some(-1.0);
         self.playback.preroll_ready = false;
+        self.playback.preroll_first = false;
         if let Some(a) = self.audio.as_mut() {
             a.stop();
         }
@@ -1002,7 +1006,12 @@ impl FilmcraftApp {
         if let Some(since) = self.playback.preroll {
             let since = if since < 0.0 { now } else { since };
             self.playback.preroll = Some(since);
-            if self.playback.preroll_ready || now - since >= frames::PREROLL_TIMEOUT_S {
+            // Start once the first frames are ready. A seek in long-GOP footage (OBS recordings)
+            // can take longer than the short timeout: starting the clock then played sound
+            // under a frozen picture that jumped ahead once decoding caught up. So past the
+            // timeout the frame at the playhead is still waited for, up to PREROLL_MAX_S.
+            let waited = now - since;
+            if self.playback.preroll_ready || (self.playback.preroll_first && waited >= frames::PREROLL_TIMEOUT_S) || waited >= frames::PREROLL_MAX_S {
                 self.end_preroll(now);
             } else {
                 ctx.request_repaint();

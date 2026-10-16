@@ -375,6 +375,9 @@ pub const PREROLL_FRAMES: i64 = 6;
 /// [`FrameServer::request`]); earlier non-reference pictures are skipped on the way.
 pub const SCRUB_KEEP_S: f64 = 2.0;
 pub const PREROLL_TIMEOUT_S: f64 = 0.5;
+/// The longest Play waits for the frame at the playhead (a seek from a distant keyframe) before
+/// starting the clock anyway.
+pub const PREROLL_MAX_S: f64 = 3.0;
 
 /// Which frames playback asks for, given the per-frame render cost (s), the displayed frame rate
 /// and the worker count: `(lead, stride)`. While the workers keep up, every frame from the
