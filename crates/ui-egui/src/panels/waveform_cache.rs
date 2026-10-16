@@ -56,7 +56,7 @@ pub fn read(path: &Path) -> Option<Vec<(f32, f32)>> {
         return None;
     }
     let f = |c: &[u8]| c.try_into().ok().map(f32::from_le_bytes);
-    body.chunks_exact(8).map(|c| Some((f(c.get(..4)?)?, f(c.get(4..)?)?))).collect()
+    body.as_chunks::<8>().0.iter().map(|c| Some((f(c.get(..4)?)?, f(c.get(4..)?)?))).collect()
 }
 
 /// Store `peaks` at `path` (best effort: a cache that can't be written is only slower).

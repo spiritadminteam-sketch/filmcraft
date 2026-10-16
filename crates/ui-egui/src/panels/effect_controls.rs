@@ -352,9 +352,9 @@ fn move_selected_keyframes(app: &mut FilmcraftApp, it: &TrackItem, dt: Tick) {
     // the last ones first when moving right (the first ones when moving left), so none lands on a
     // keyframe that has not moved yet
     if dt.0 > 0 {
-        moves.sort_by(|a, b| b.0.time.cmp(&a.0.time));
+        moves.sort_by_key(|m| std::cmp::Reverse(m.0.time));
     } else {
-        moves.sort_by(|a, b| a.0.time.cmp(&b.0.time));
+        moves.sort_by_key(|m| m.0.time);
     }
     let cmds = moves
         .iter()
