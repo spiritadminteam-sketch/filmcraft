@@ -206,7 +206,10 @@ pub fn drag_span_linked(track: &Track, tr: &Transition, edge: Option<Edge>, delt
     // each end moves `g` outwards: start - g >= lo, end + g <= hi; shrinking (g < 0) stops when
     // an end reaches the cut or the transition is down to one frame
     let max_g = s0.0.saturating_sub(lo.0).min(hi.0.saturating_sub(e0.0)).max(0);
-    let max_shrink = cut.0.saturating_sub(s0.0).min(e0.0.saturating_sub(cut.0)).min(d0.0.saturating_sub(frame).div_euclid(2)).max(0);
+    // (whole frames, so an even shrink keeps it on frame boundaries)
+    let half = d0.0.saturating_sub(frame).div_euclid(2);
+    let half = half.saturating_sub(half.rem_euclid(frame));
+    let max_shrink = cut.0.saturating_sub(s0.0).min(e0.0.saturating_sub(cut.0)).min(half).max(0);
     let min_g = max_shrink.saturating_neg();
     if min_g > max_g {
         return Some((s0, d0));
