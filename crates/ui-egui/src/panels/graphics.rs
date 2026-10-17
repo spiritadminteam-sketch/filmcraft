@@ -839,7 +839,20 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
         let p = resp.interact_pointer_pos().unwrap_or(pic.center());
         let in_edit = edit_view.is_some_and(|v| v.hit(p));
         match tool {
-            _ if in_edit => {}
+            // a click (or double-click) inside the text being edited puts the caret there;
+            // Shift extends the selection to it (a press that moves is the drag above)
+            _ if in_edit => {
+                if let (Some(v), Some(mut ed)) = (edit_view, app.ui.gfx_edit.clone())
+                    && let Some(tp) = text_of(&v.spec)
+                    && let Some((x, y)) = v.to_local(p)
+                {
+                    ed.caret = text_layout(tp).hit(x, y);
+                    if !ui.input(|i| i.modifiers.shift) {
+                        ed.anchor = ed.caret;
+                    }
+                    app.ui.gfx_edit = Some(ed);
+                }
+            }
             Tool::Type | Tool::VerticalType => {
                 if let Some(v) = views.iter().find(|v| v.is_text() && v.hit(p)) {
                     start_edit_at(app, ui, v, p, &mut actions);

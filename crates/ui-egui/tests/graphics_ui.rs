@@ -235,3 +235,40 @@ fn shadow_color_drag_is_one_undo_step() {
     d.exec("edit.undo", json!({}));
     assert_eq!(color(&mut d), before, "one undo restores the original color");
 }
+
+/// While a text layer is being edited, a click (or a double-click, the way people pick a spot)
+/// inside it puts the caret there, so a letter can be added mid-word without the arrow keys.
+#[test]
+fn a_click_inside_the_text_being_edited_moves_the_caret() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Captions and Graphics"}));
+    d.exec("playhead.set", json!({"seconds": 2}));
+    d.ok("ui.set", json!({"tool": "Type"}));
+    d.frames(3);
+    let pic = d.rect("program.picture");
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.2, "y": pic[1] + pic[3] * 0.35}));
+    d.ok("ui.type", json!({"text": "IDONT"}));
+    let list = d.exec("graphics.list", json!({}));
+    let clip = list["clip"].as_u64().unwrap();
+    let lr = d.rect(&format!("program.layer.{clip}.0"));
+    let cy = lr[1] + lr[3] / 2.0;
+    // just inside the left edge: the caret goes before the first letter
+    d.ok("ui.click", json!({"x": lr[0] + 1.0, "y": cy}));
+    d.ok("ui.type", json!({"text": "<"}));
+    let list = d.exec("graphics.list", json!({"clip": clip}));
+    assert_eq!(list["layers"][0]["text"], "<IDONT", "{list}");
+    // the Selection tool: a double-click on the edited text moves the caret too (it was ignored)
+    d.ok("ui.set", json!({"tool": "Selection"}));
+    d.frames(30);
+    let lr = d.rect(&format!("program.layer.{clip}.0"));
+    d.ok("ui.click", json!({"x": lr[0] + lr[2] - 1.0, "y": cy, "count": 2}));
+    d.ok("ui.type", json!({"text": ">"}));
+    let list = d.exec("graphics.list", json!({"clip": clip}));
+    assert_eq!(list["layers"][0]["text"], "<IDONT>", "{list}");
+    d.frames(30);
+    let lr = d.rect(&format!("program.layer.{clip}.0"));
+    d.ok("ui.click", json!({"x": lr[0] + 1.0, "y": cy, "count": 2}));
+    d.ok("ui.type", json!({"text": "!"}));
+    let list = d.exec("graphics.list", json!({"clip": clip}));
+    assert_eq!(list["layers"][0]["text"], "!<IDONT>", "{list}");
+}
