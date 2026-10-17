@@ -390,3 +390,176 @@ fn dragging_in_the_trim_monitor_trims_without_hanging() {
     assert!(e1 < e0, "the Out edge moved in by {} frames", frames.abs());
     assert!((6..=14).contains(&-frames), "about 11 frames expected for 60 px at 6 px/frame, moved {}", frames.abs());
 }
+
+fn locked_move_keeps_the_original_preview(audio: bool, destination: bool, linked_partner: bool, edge: Option<&str>) {
+    let mut d = Driver::demo();
+    d.exec("sequence.linkedSelection", json!({"on": linked_partner}));
+    let seq = d.app().session.active_sequence().unwrap();
+    let tracks = if audio { &seq.audio_tracks } else { &seq.video_tracks };
+    let clip = tracks[0].items[0].id;
+    let locked = if linked_partner { seq.audio_tracks[0].id } else { tracks[usize::from(destination)].id };
+    d.exec("timeline.setTrack", json!({"track": locked.0, "locked": true}));
+    d.frames(3);
+    let prefix = format!("timeline.clip.{}", clip.0);
+    let original = d.ok("ui.elements", json!({"prefix": prefix}))[0]["rect"].clone();
+    let r = original.as_array().unwrap();
+    let from = pos2(r[0].as_f64().unwrap() as f32 + r[2].as_f64().unwrap() as f32 * 0.5, r[1].as_f64().unwrap() as f32 + 8.0);
+    let from = if let Some(edge) = edge {
+        let point = d.ok("ui.timeline.locate", json!({"clip": clip.0, "edge": edge}));
+        pos2(point["x"].as_f64().unwrap() as f32, from.y)
+    } else {
+        from
+    };
+    let mut to = from + egui::vec2(60.0, 0.0);
+    if destination {
+        let label = if audio { "A2" } else { "V2" };
+        let rows = d.ok("ui.elements", json!({"prefix": format!("timeline.track.{label}.target")}));
+        let y = &rows[0]["rect"];
+        to.y = (y[1].as_f64().unwrap() + y[3].as_f64().unwrap() * 0.5) as f32;
+    }
+    let before = d.app().session.project.clone();
+    let undo = d.app().session.history.undo.len();
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(from));
+    d.frames(1);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    d.frames(1);
+    for i in 1..=8 {
+        d.harness.input_mut().events.push(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 8.0)));
+        d.frames(1);
+    }
+    d.frames(2);
+    let elements = d.ok("ui.elements", json!({"prefix": prefix}));
+    assert_eq!(elements[0]["rect"], original, "a prohibited move never previews a displaced clip");
+    assert_eq!(d.cursor(), CursorIcon::NotAllowed);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    });
+    d.frames(2);
+    assert_eq!(serde_json::to_value(&*d.app().session.project).unwrap(), serde_json::to_value(&*before).unwrap());
+    assert_eq!(d.app().session.history.undo.len(), undo);
+}
+
+#[test]
+fn locked_sources_do_not_preview_a_move() {
+    for audio in [false, true] {
+        locked_move_keeps_the_original_preview(audio, false, false, None);
+    }
+}
+#[test]
+fn locked_destinations_do_not_preview_a_move() {
+    for audio in [false, true] {
+        locked_move_keeps_the_original_preview(audio, true, false, None);
+    }
+}
+#[test]
+fn a_locked_linked_partner_prevents_the_move_preview() {
+    locked_move_keeps_the_original_preview(false, false, true, None);
+}
+
+#[test]
+fn locked_edges_do_not_preview_a_trim() {
+    for audio in [false, true] {
+        for edge in ["in", "out"] {
+            locked_move_keeps_the_original_preview(audio, false, false, Some(edge));
+        }
+    }
+}
+
+fn move_existing_clip_to_a_new_track(audio: bool, linked: bool) {
+    let mut d = Driver::demo();
+    d.exec("sequence.linkedSelection", json!({"on": linked}));
+    d.exec("sequence.snap", json!({"on": false}));
+    d.ok("ui.set", json!({"timeline":{"videoTrackHeight":32,"audioTrackHeight":32}}));
+    d.frames(6);
+    let q = d.app().session.active_sequence().unwrap();
+    let tracks = if audio { &q.audio_tracks } else { &q.video_tracks };
+    let count = tracks.len();
+    let clip = tracks[0].items[0].id;
+    let original = q.find_item(clip).unwrap().1.clone();
+    let other = if audio { &q.video_tracks } else { &q.audio_tracks };
+    let other_count = other.len();
+    let partner = linked.then(|| {
+        assert!(original.link.is_some());
+        other.iter().flat_map(|t| &t.items).find(|i| i.link == original.link).unwrap().clone()
+    });
+    let layout = d.app().tl.layout.as_ref().unwrap();
+    let row = layout.rows.iter().find(|r| r.track == tracks[0].id).unwrap();
+    let outer = layout.rows.iter().find(|r| r.track == tracks.last().unwrap().id).unwrap();
+    let from = egui::pos2(layout.x_of(original.start + filmcraft_time::Tick(original.duration.0 / 2)), row.rect.min.y + 8.0);
+    let to = egui::pos2(from.x, if audio { outer.rect.max.y + 8.0 } else { outer.rect.min.y - 8.0 });
+    assert!(layout.content.contains(to));
+    assert!(layout.row_at(to.y).is_none());
+    let before = d.app().session.project.clone();
+    let undo = d.app().session.history.undo.len();
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(from));
+    d.frames(1);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    d.frames(1);
+    for i in 1..=12 {
+        d.harness.input_mut().events.push(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 12.0)));
+        d.frames(1);
+    }
+    // A frame updates the gesture, then the next frame paints its destination.
+    d.frames(2);
+    let preview = d.ok("ui.elements", json!({"prefix":format!("timeline.newTrackPreview.{}",clip.0)}));
+    assert_eq!(preview.as_array().unwrap().len(), 1, "new destination is shown during the drag");
+    assert_eq!(*d.app().session.project, *before);
+    assert_eq!(d.app().session.history.undo.len(), undo);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    });
+    d.frames(2);
+    let q = d.app().session.active_sequence().unwrap();
+    let tracks = if audio { &q.audio_tracks } else { &q.video_tracks };
+    assert_eq!(tracks.len(), count + 1, "drop creates a new outer track");
+    assert_eq!(q.find_item(clip).unwrap().0, tracks.last().unwrap().id);
+    assert_eq!(q.find_item(clip).unwrap().1, &original);
+    let other = if audio { &q.video_tracks } else { &q.audio_tracks };
+    assert_eq!(other.len(), other_count + usize::from(linked));
+    if let Some(partner) = partner {
+        assert_eq!(q.find_item(partner.id).unwrap().0, other.last().unwrap().id);
+        assert_eq!(q.find_item(partner.id).unwrap().1, &partner);
+    }
+    assert_eq!(d.app().session.history.undo.len(), undo + 1);
+    let after = d.app().session.project.clone();
+    d.exec("edit.undo", json!({}));
+    assert_eq!(*d.app().session.project, *before);
+    d.exec("edit.redo", json!({}));
+    assert_eq!(*d.app().session.project, *after);
+}
+
+#[test]
+fn existing_video_clip_drag_above_tracks_adds_a_track() {
+    move_existing_clip_to_a_new_track(false, false);
+}
+
+#[test]
+fn existing_audio_clip_drag_below_tracks_adds_a_track() {
+    move_existing_clip_to_a_new_track(true, false);
+}
+
+#[test]
+fn linked_video_drag_adds_video_and_audio_tracks() {
+    move_existing_clip_to_a_new_track(false, true);
+}
+
+#[test]
+fn linked_audio_drag_adds_audio_and_video_tracks() {
+    move_existing_clip_to_a_new_track(true, true);
+}

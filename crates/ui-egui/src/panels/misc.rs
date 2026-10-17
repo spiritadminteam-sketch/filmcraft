@@ -62,7 +62,10 @@ pub const MARKER_FILTER: [filmcraft_project::Label; 7] = {
 /// double-click = the Marker dialog, right-click = its menu).
 pub fn markers(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
-    let Some(seq) = app.session.active_sequence().cloned() else {
+    // Keep the immutable project snapshot alive while UI commands mutate the session.
+    // Cloning a sequence here copies every clip and effect on every redraw.
+    let project = app.session.project.clone();
+    let Some(seq) = app.session.state.active_sequence.and_then(|id| project.sequence(id)) else {
         crate::dock::placeholder(ui, rect, &t, tl!("(no sequence)"));
         return;
     };
@@ -153,8 +156,9 @@ pub fn info(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             ui.label(v);
         });
     };
-    if let Some(item) = app.session.state.project_selection.first().and_then(|i| app.session.project.item(*i)).cloned() {
-        ui.label(egui::RichText::new(&item.name).strong());
+    if let Some(item) = super::metadata::target(app).and_then(|id| app.session.project.item(id)).cloned() {
+        let header = ui.label(egui::RichText::new(&item.name).strong());
+        app.auto.add_response("info.item", &header, &item.name);
         line(ui, tl!("Type:"), crate::i18n::t(item.type_label()).to_string());
         if let Some(m) = item.as_media() {
             if let Some(v) = &m.info.video {
@@ -170,7 +174,8 @@ pub fn info(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     if let Some(seq) = app.session.active_sequence() {
         let name = app.session.state.active_sequence.and_then(|s| app.session.project.item(s)).map(|i| i.name.clone()).unwrap_or_default();
-        ui.label(egui::RichText::new(name).strong());
+        let header = ui.label(egui::RichText::new(&name).strong());
+        app.auto.add_response("info.sequence", &header, &name);
         line(
             ui,
             tl!("Settings:"),

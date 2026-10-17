@@ -347,6 +347,7 @@ impl Mp4Source {
                 Some(Mp4Audio { track: i, state, starts, offset, preroll })
             })
             .collect();
+        snap_to_frame_grid(&mut file, vtrack);
         rebase_unedited_video(&mut file, vtrack, &mut audios);
         Ok(Self { info, bytes, file, vtrack, video: GopCache::new(explicit_color).with_rotation(rotation).with_crop(aperture), audios })
     }
@@ -540,7 +541,8 @@ fn audio_stream_info(t: &filmcraft_isobmff::Track, bytes: &crate::Src) -> Option
                     None => ap.sample_rate as u32,
                 }
             },
-            if a.channel_config > 0 { a.channel_config as u32 } else { ap.channels },
+            // the configuration is an index (7 and 12 are both eight channels), not a count
+            if a.channels() > 0 { a.channels() } else { ap.channels },
             None,
         ),
         CodecConfig::Pcm(p) => (p.sample_rate as u32, p.channels, Some(p.bits as u32)),
@@ -577,6 +579,7 @@ fn codec_label(c: &CodecConfig) -> String {
         ),
         CodecConfig::Hevc(_) => "HEVC".into(),
         CodecConfig::Vp9(c) => format!("VP9 (Profile {})", c.profile),
+        CodecConfig::Unknown { fourcc, .. } if fourcc.0 == *b"vp08" => "VP8".into(),
         CodecConfig::Av1(c) => format!("AV1 ({} Profile)", ["Main", "High", "Professional"].get(c.seq_profile as usize).unwrap_or(&"Main")),
         CodecConfig::Apv(a) => match filmcraft_apv::Profile::from_idc(a.profile_idc) {
             Some(p) => p.name().into(),
@@ -662,6 +665,66 @@ pub fn opener(name: &str, bytes: Arc<[u8]>) -> Option<Result<SharedSource, Media
         return None;
     }
     Some(Mp4Source::open(name, bytes).map(|s| Arc::new(s) as SharedSource).map_err(Into::into))
+}
+
+/// Put the video samples of a constant-rate file whose pictures sit just off its frame grid back
+/// on the grid (#1282). Phone footage stamps frames up to a millisecond after where they belong (a
+/// first frame 34.1 ms long at 30 fps), and the frame shown at a time is the last one that starts at
+/// or before it: a sequence frame asked at the exact grid time got the picture before.
+///
+/// The grid starts at the first picture and steps by the nominal frame duration. A file is snapped
+/// only when every picture is less than a quarter of a frame from its own grid point and no two land
+/// on the same one: a frame that far off was placed there (variable frame rate), so a file with one
+/// such picture keeps all its times. A picture at most one unit off is left where it is: that can't
+/// be told from the timescale's rounding. Snapping keeps the samples' presentation order. Only the video samples move: the first picture, which the audio and
+/// `rebase_unedited_video` go by, is the grid's origin, and the clip's duration comes from the
+/// track header.
+fn snap_to_frame_grid(file: &mut Mp4File, vtrack: Option<usize>) {
+    let Some(t) = vtrack.and_then(|i| file.tracks.get_mut(i)) else { return };
+    let Some(first) = t.samples.iter().map(|s| s.pts).min() else { return };
+    // The nominal duration: the median sample duration, averaged with the durations one unit from
+    // it. Those are the same duration rounded to the timescale (1501 and 1502 at 59.94 fps over
+    // 90 kHz): the median alone drifts half a unit a frame, enough to snap a short clip onto the
+    // wrong points.
+    let mut durs: Vec<u32> = t.samples.iter().map(|s| s.duration).collect();
+    durs.sort_unstable();
+    let Some(&median) = durs.get(durs.len() / 2) else { return };
+    let near: Vec<f64> = durs.iter().filter(|&&d| d.abs_diff(median) <= 1).map(|&d| f64::from(d)).collect();
+    let mean = near.iter().sum::<f64>() / near.len().max(1) as f64;
+    if mean <= 0.0 {
+        return;
+    }
+    let rate = FrameRate::from_f64(f64::from(t.timescale) / mean);
+    // one frame lasts `step_num / step_den` track units
+    let (step_num, step_den) = (i128::from(t.timescale) * i128::from(rate.den), i128::from(rate.num));
+    if step_num <= 0 || step_den <= 0 {
+        return;
+    }
+    // a sample's grid index and its new time
+    let snap = |pts: i64| -> Option<(i128, i64)> {
+        let off = i128::from(pts) - i128::from(first);
+        // the nearest grid index, then its grid point (both rounded half up)
+        let n = (2 * off * step_den + step_num).div_euclid(2 * step_num);
+        let at = i128::from(first) + (2 * n * step_num + step_den).div_euclid(2 * step_den);
+        let off_grid = (i128::from(pts) - at).abs();
+        if off_grid * 4 * step_den >= step_num {
+            return None;
+        }
+        Some((n, if off_grid <= 1 { pts } else { i64::try_from(at).ok()? }))
+    };
+    let Some(snapped) = t.samples.iter().map(|s| snap(s.pts)).collect::<Option<Vec<_>>>() else { return };
+    // Two pictures by one grid point: not a constant rate. Checked on the index, not the new time:
+    // one picture kept a unit after the point and another moved onto it would be distinct times in
+    // the wrong order.
+    let mut points: Vec<i128> = snapped.iter().map(|&(n, _)| n).collect();
+    points.sort_unstable();
+    points.dedup();
+    if points.len() != snapped.len() {
+        return;
+    }
+    for (s, (_, p)) in t.samples.iter_mut().zip(snapped) {
+        s.pts = p;
+    }
 }
 
 /// Start the file at its first picture when its video track has no edit list (#714). Without an

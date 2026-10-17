@@ -73,7 +73,7 @@ while let Some(p) = d.next_packet()? {        // file order, all tracks
 | `A_VORBIS` | `Vorbis` | three headers split from Xiph-laced CodecPrivate |
 | `A_FLAC` | `Flac` | `fLaC` + metadata blocks |
 | `A_PCM/INT/LIT`, `A_PCM/INT/BIG`, `A_PCM/FLOAT/IEEE` | `Pcm` | bit depth from Audio |
-| `A_AC3`, `A_EAC3`, `A_MPEG/L3`, `A_MPEG/L2` | `Ac3`, `Eac3`, `Mp3`, `Mp2` | |
+| `A_AC3`, `A_EAC3`, `A_MPEG/L3`, `A_MPEG/L2`, `A_MPEG/L1` | `Ac3`, `Eac3`, `Mp3`, `Mp2`, `Mp1` | |
 | `S_TEXT/UTF8` | `SubRip` | |
 | `S_TEXT/WEBVTT`, `D_WEBVTT/*` (WebM) | `WebVtt` | WebM blocks keep `id\nsettings\npayload` |
 | `S_TEXT/ASS`, `S_TEXT/SSA` | `Ass` | script header |

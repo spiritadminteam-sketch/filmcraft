@@ -231,6 +231,11 @@ fn effects_panel_lists_the_premiere_transition_folders() {
     for id in ["additive_dissolve_legacy", "clock_wipe_legacy", "cross_dissolve_legacy", "push_legacy", "whip_legacy"] {
         assert!(items.iter().any(|i| i == &format!("effects.item.{id}")), "{id}: {items:?}");
     }
+    // a folder whose own name has a slash keeps all of it (Noise Reduction/Restoration, not Restoration)
+    d.ok("ui.set", json!({"effectsSearch": "denoise"}));
+    d.frames(3);
+    let noise = d.ok("ui.elements", json!({"prefix": "effects.folder.Audio Effects/Noise Reduction/Restoration"}));
+    assert_eq!(noise[0]["label"], json!("Noise Reduction/Restoration"), "{noise}");
     // obsolete transitions stay out of the panel
     d.ok("ui.set", json!({"effectsSearch": "venetian"}));
     d.frames(3);
@@ -247,6 +252,21 @@ fn effects_panel_lists_the_premiere_transition_folders() {
     d.exec("sequence.applyVideoTransition", json!({"effect": "Iris Round"}));
     let seq = d.sequence();
     assert!(seq["video"][0]["transitions"].as_array().unwrap().iter().any(|t| t["effect"] == "iris_round"), "{seq}");
+}
+
+#[test]
+fn cmd_d_applies_the_default_transition_to_the_selected_clip() {
+    // #1124: the playhead is mid-clip, away from every cut
+    let mut d = Driver::demo();
+    let clip = track_clips(&d.sequence(), 0)[2].clone();
+    let id = clip["clip"].clone();
+    let mid = (clip["start"].as_i64().unwrap() + clip["end"].as_i64().unwrap()) / 2;
+    d.exec("playhead.set", json!({"time": mid}));
+    d.exec("timeline.select", json!({"clips": [id]}));
+    d.ok("ui.key", json!({"key": "Cmd+D"}));
+    d.frames(2);
+    let seq = d.sequence();
+    assert!(seq["video"][0]["transitions"].as_array().unwrap().iter().any(|t| t["to"] == id && t["effect"] == "cross_dissolve"), "{seq}");
 }
 
 #[test]
@@ -561,4 +581,27 @@ fn recording_a_shortcut_skips_the_modifier_key_presses() {
     let got = d.ok("engine.execute", json!({"command": "shortcuts.get", "params": {"command": "sequence.addEdit"}})).to_string();
     assert!(got.contains("Alt+Shift+J"), "{got}");
     assert!(got.contains("Cmd+K"), "{got}");
+}
+
+#[test]
+fn eyedropper_picks_a_key_color_on_a_selected_clip() {
+    // #1023: the selected clip's transform handles covered the Program picture and took the click
+    let mut d = Driver::demo();
+    let clip = track_clips(&d.sequence(), 0)[0]["clip"].clone();
+    d.exec("timeline.select", json!({"clips": [clip]}));
+    d.exec("effects.apply", json!({"effect": "Color Key"}));
+    d.ok("ui.panel.show", json!({"panel": "EffectControls"}));
+    d.frames(4);
+    let color = |d: &mut Driver| d.sequence()["video"][0]["items"][0]["effects"][0]["params"]["color"]["value"].clone();
+    let before = color(&mut d);
+    d.ok("ui.click", json!({"id": "effectControls.color_key.color.eyedropper"}));
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "program.picture"}));
+    for _ in 0..200 {
+        if color(&mut d) != before {
+            break;
+        }
+        d.frames(1);
+    }
+    assert_ne!(color(&mut d), before, "the eyedropper filled Key Color from the Program picture");
 }

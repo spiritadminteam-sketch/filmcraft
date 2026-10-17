@@ -86,9 +86,19 @@ fn marker_grab_rect(layout: &Layout, start: Tick, chapter: bool) -> Rect {
 /// Half the width of a marker's grab area (px).
 pub const MARKER_GRAB_PX: f32 = 8.0;
 
-/// The marker under `pos` on the ruler: the nearest one when the grab areas of several overlap.
-fn marker_under<'a>(seq: &'a Sequence, layout: &Layout, pos: Pos2) -> Option<&'a filmcraft_project::Marker> {
-    if !pos.x.is_finite() || !pos.y.is_finite() {
+/// The visible duration band, shared by painting and hit testing (#1143).
+pub fn marker_range_rect(layout: &Layout, marker: &filmcraft_project::Marker) -> Option<Rect> {
+    (marker.duration > Tick::ZERO).then(|| {
+        let y = layout.ruler.min.y + 2.0;
+        Rect::from_min_max(pos2(layout.x_of(marker.start), y), pos2(layout.x_of(marker.start + marker.duration), y + 8.0)).intersect(layout.ruler)
+    })
+}
+
+/// The marker under `pos` on the ruler: of the markers whose grab area holds it, the nearest one;
+/// else the topmost one whose duration band holds it. Preserve its id when opening a context
+/// menu: several markers can share a start, and the playhead can move while it is open.
+pub fn marker_under_pointer<'a>(seq: &'a Sequence, layout: &Layout, pos: Pos2) -> Option<&'a filmcraft_project::Marker> {
+    if !pos.x.is_finite() || !pos.y.is_finite() || !layout.ruler.contains(pos) {
         return None;
     }
     seq.markers
@@ -96,17 +106,18 @@ fn marker_under<'a>(seq: &'a Sequence, layout: &Layout, pos: Pos2) -> Option<&'a
         .rev()
         .filter(|m| marker_grab_rect(layout, m.start, m.kind == filmcraft_project::MarkerKind::Chapter).contains(pos))
         .min_by(|a, b| (layout.x_of(a.start) - pos.x).abs().total_cmp(&(layout.x_of(b.start) - pos.x).abs()))
+        .or_else(|| seq.markers.iter().rev().find(|m| marker_range_rect(layout, m).is_some_and(|r| r.contains(pos))))
 }
 
-/// The start of the marker under `pos` on the ruler (see [`marker_under`]). A press there puts
-/// the playhead on the marker, so Markers ▸ Clear Selected Marker removes it (#695).
+/// The start of the marker under `pos` on the ruler (see [`marker_under_pointer`]). A press there
+/// puts the playhead on the marker, so Markers ▸ Clear Selected Marker removes it (#695).
 pub fn marker_at(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<Tick> {
-    marker_under(seq, layout, pos).map(|m| m.start)
+    marker_under_pointer(seq, layout, pos).map(|m| m.start)
 }
 
 /// The marker (id and start) under `pos` on the ruler, as [`marker_at`].
 pub fn marker_hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<(filmcraft_project::MarkerId, Tick)> {
-    marker_under(seq, layout, pos).map(|m| (m.id, m.start))
+    marker_under_pointer(seq, layout, pos).map(|m| (m.id, m.start))
 }
 
 pub fn hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Hit {
@@ -491,6 +502,31 @@ mod tests {
         seq.markers.push(mk(3, 3.05, filmcraft_project::MarkerKind::Comment));
         assert_eq!(marker_hit(&seq, &l, pos2(x(3.0) - 2.0, 10.0)).map(|m| m.0.0), Some(1));
         assert_eq!(marker_hit(&seq, &l, pos2(x(3.05) + 2.0, 10.0)).map(|m| m.0.0), Some(3));
+    }
+
+    #[test]
+    fn range_bands_hit_the_last_drawn_marker_and_stay_on_the_ruler() {
+        let (mut seq, layout, _) = fixture(clips());
+        for id in [9, 10] {
+            seq.markers.push(filmcraft_project::Marker {
+                id: filmcraft_project::MarkerId(id),
+                start: Tick::from_seconds_f64(3.0),
+                duration: Tick::from_seconds_f64(2.0),
+                name: String::new(),
+                comment: String::new(),
+                kind: filmcraft_project::MarkerKind::Comment,
+                color: Label::Green,
+            });
+        }
+        let band = marker_range_rect(&layout, &seq.markers[1]).unwrap();
+        let at = band.center();
+        assert_eq!(marker_under_pointer(&seq, &layout, at).unwrap().id.0, 10);
+        assert_eq!(marker_at(&seq, &layout, at), Some(seq.markers[1].start));
+        assert!(marker_under_pointer(&seq, &layout, at + vec2(0.0, 20.0)).is_none());
+        assert!(marker_under_pointer(&seq, &layout, pos2(f32::NAN, at.y)).is_none());
+        seq.markers[1].duration = Tick(-1);
+        assert!(marker_range_rect(&layout, &seq.markers[1]).is_none());
+        assert_eq!(marker_under_pointer(&seq, &layout, at).unwrap().id.0, 9);
     }
 
     use egui::Modifiers;

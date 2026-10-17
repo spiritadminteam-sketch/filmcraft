@@ -97,9 +97,10 @@ fn changed_in_band_parameter_sets_switch_to_software() {
     let out = decode_all(&mut d, &same);
     assert!(d.is_hardware());
     assert_same("repeated SPS", &out, &decode_all(filmcraft_codecs::software_video_decoder(&s.entry).unwrap().as_mut(), &same));
-    // a different SPS (same values, trailing zero byte) at the second sync sample: software
+    // a different SPS (same values, another nal_ref_idc: a trailing zero byte is not a change) at
+    // the second sync sample: software
     let mut changed_sps = sps.clone();
-    changed_sps.push(0);
+    changed_sps[0] ^= 0x40;
     let k = (1..s.samples.len()).find(|&i| s.sync[i]).unwrap();
     let changed: Vec<_> = s.samples.iter().enumerate().map(|(i, (x, p))| (if i == k { with_sps(&changed_sps, x) } else { x.clone() }, *p)).collect();
     let mut d = hybrid(&s, usize::MAX);

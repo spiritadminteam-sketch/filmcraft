@@ -347,9 +347,10 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let pr = preset(str_p(p, "preset").unwrap_or(DEFAULT_PROXY_PRESET)).ok_or_else(|| bad("media.createProxies", "unknown preset (see media.proxyPresets)"))?;
     let items = items_param(s, p);
     // default: Project Settings ▸ Scratch Disks ▸ Captured and Generated, else next to the media
-    let dest = str_p(p, "destination")
-        .map(str::to_string)
-        .or_else(|| s.project.settings.scratch.captured.clone().filter(|d| !d.is_empty()).map(|d| format!("{d}/Proxies")));
+    let dest = str_p(p, "destination").map(str::to_string).or_else(|| {
+        crate::project_tools::trusted_scratch(s.project.settings.scratch.captured.as_deref(), s.path.as_deref(), &s.prefs.auto_save.scratch_folders)
+            .map(|d| d.join("Proxies").to_string_lossy().into_owned())
+    });
     let mut work = Vec::new();
     let mut taken = Vec::new();
     let mut skipped = Vec::new();
@@ -362,6 +363,13 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
             skipped.push(json!({"item": i.0, "reason": format!("{name} has no video to proxy")}));
             continue;
         }
+        let path = match s.media.follow(&path) {
+            Ok(file) => file,
+            Err(why) => {
+                skipped.push(json!({"item": i.0, "reason": format!("{path} is not opened: {why}")}));
+                continue;
+            }
+        };
         let stem = Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name);
         let out = unique_path(&proxy_dir(&path, dest.as_deref()), &stem, "_Proxy", pr.extension, &taken).to_string_lossy().into_owned();
         taken.push(out.clone());
@@ -376,6 +384,56 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let attach = bool_p(p, "attach").unwrap_or(true);
     let job = start_job(s, label, work, if attach { OnDone::AttachProxies } else { OnDone::Nothing }, bool_p(p, "wait").unwrap_or(false))?;
     Ok(json!({"job": job, "preset": pr.id, "outputs": outputs, "skipped": skipped}))
+}
+
+/// Copy to a new file, numbering collisions without replacing another take. Open the input
+/// first and create the output exclusively, so a failed read or a competing copy cannot replace
+/// an existing destination. Relink only after the copy's identity has been checked.
+fn copy_for_ingest(s: &mut Session, item: ItemId, path: &str, dir: &Path) -> Result<String> {
+    let source = Path::new(path);
+    let name = source.file_name().ok_or_else(|| bad("ingest", "source has no file name"))?;
+    let mut input = std::fs::File::open(source).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    std::fs::create_dir_all(dir).map_err(|e| EngineError::Other(format!("{}: {e}", dir.display())))?;
+    let mut number = 1u64;
+    let (out, mut output) = loop {
+        let mut next = if number == 1 { name.to_os_string() } else { source.file_stem().unwrap_or(name).to_os_string() };
+        if number != 1 {
+            next.push(format!(" {number}"));
+            if let Some(extension) = source.extension() {
+                next.push(".");
+                next.push(extension);
+            }
+        }
+        let out = dir.join(next);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&out) {
+            Ok(output) => break (out, output),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                number = number.checked_add(1).ok_or_else(|| bad("ingest", "no unused destination name"))?;
+            }
+            Err(e) => return Err(EngineError::Other(format!("{}: {e}", out.display()))),
+        }
+    };
+    let copied = std::io::copy(&mut input, &mut output).and_then(|_| output.set_permissions(input.metadata()?.permissions()));
+    drop(output);
+    let out_s = out.to_string_lossy().into_owned();
+    let linked = copied.map_err(|e| EngineError::Other(format!("copying {path}: {e}"))).and_then(|_| {
+        let a = crate::relink::identity_of(&*s.services, path).map_err(|e| EngineError::Other(e.to_string()))?;
+        let b = crate::relink::identity_of(&*s.services, &out_s).map_err(|e| EngineError::Other(e.to_string()))?;
+        if a != b {
+            return Err(EngineError::Other(format!("the copy of {} doesn't match the original", name.to_string_lossy())));
+        }
+        // The generated suffix may change the name; every other relink check still applies.
+        crate::relink::relink(s, &json!({"item": item.0, "path": out_s, "relinkOthers": false, "match": {"fileName": false}}))?;
+        Ok(())
+    });
+    if let Err(error) = linked {
+        // Only this operation's exclusively created file can be removed on failure.
+        if let Err(cleanup) = std::fs::remove_file(&out) {
+            return Err(EngineError::Other(format!("{error}; removing incomplete copy {}: {cleanup}", out.display())));
+        }
+        return Err(error);
+    }
+    Ok(out_s)
 }
 
 /// Ingest freshly imported items per the project's ingest settings.
@@ -393,21 +451,10 @@ pub fn ingest(s: &mut Session, items: &[ItemId]) -> Result<Value> {
                 Some(d) if !d.is_empty() => PathBuf::from(d),
                 _ => Path::new(&path).parent().unwrap_or(Path::new(".")).join("Ingested Media"),
             };
-            let fname = Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let out = dir.join(&fname);
-            if Path::new(&path) == out {
+            if Path::new(&path).file_name().is_some_and(|name| Path::new(&path) == dir.join(name)) {
                 continue;
             }
-            std::fs::create_dir_all(&dir).map_err(|e| EngineError::Other(format!("{}: {e}", dir.display())))?;
-            std::fs::copy(&path, &out).map_err(|e| EngineError::Other(format!("copying {fname}: {e}")))?;
-            let out_s = out.to_string_lossy().into_owned();
-            // verify the copy before switching to it
-            let a = crate::relink::identity_of(&*s.services, &path).map_err(|e| EngineError::Other(e.to_string()))?;
-            let b = crate::relink::identity_of(&*s.services, &out_s).map_err(|e| EngineError::Other(e.to_string()))?;
-            if a != b {
-                return Err(EngineError::Other(format!("the copy of {fname} doesn't match the original")));
-            }
-            crate::relink::relink(s, &json!({"item": i.0, "path": out_s, "relinkOthers": false}))?;
+            let out_s = copy_for_ingest(s, i, &path, &dir)?;
             copied.push(json!({"item": i.0, "path": out_s}));
         }
     }
@@ -423,6 +470,7 @@ pub fn ingest(s: &mut Session, items: &[ItemId]) -> Result<Value> {
             let pr =
                 preset(if ing.preset.is_empty() { DEFAULT_TRANSCODE_PRESET } else { ing.preset.as_str() }).ok_or_else(|| bad("ingest", "unknown preset"))?;
             let mut work = Vec::new();
+            let mut taken = Vec::new();
             for &i in items {
                 let Some((clip, path, name)) = media_path(&s.project, i) else { continue };
                 if clip.info.video.is_none() {
@@ -433,7 +481,9 @@ pub fn ingest(s: &mut Session, items: &[ItemId]) -> Result<Value> {
                     _ => Path::new(&path).parent().unwrap_or(Path::new(".")).join("Ingested Media"),
                 };
                 let stem = Path::new(&path).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name);
-                work.push((i, unique_path(&dir, &stem, "", pr.extension, &[]).to_string_lossy().into_owned(), pr));
+                let out = unique_path(&dir, &stem, "", pr.extension, &taken).to_string_lossy().into_owned();
+                taken.push(out.clone());
+                work.push((i, out, pr));
             }
             if !work.is_empty() {
                 let id = start_job(s, format!("Ingest: transcode {} clip(s)", work.len()), work, OnDone::ReplaceMedia, false)?;

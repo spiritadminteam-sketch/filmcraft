@@ -171,6 +171,98 @@ fn dpx_stills_every_layout() {
     }
 }
 
+/// A big-endian DPX file holding `data` as its one image element (`w` × `h`, the given
+/// descriptor, bit depth, packing and colorimetric code; reference codes undefined).
+fn dpx_file(w: u32, h: u32, descriptor: u8, bits: u8, packing: u16, colorimetric: u8, data: &[u8]) -> Vec<u8> {
+    let mut f = vec![0u8; 2048];
+    let put = |f: &mut Vec<u8>, at: usize, v: &[u8]| f[at..at + v.len()].copy_from_slice(v);
+    put(&mut f, 0, b"SDPX");
+    put(&mut f, 4, &2048u32.to_be_bytes());
+    put(&mut f, 8, b"V2.0");
+    put(&mut f, 16, &(2048 + data.len() as u32).to_be_bytes());
+    put(&mut f, 770, &1u16.to_be_bytes());
+    put(&mut f, 772, &w.to_be_bytes());
+    put(&mut f, 776, &h.to_be_bytes());
+    let el = 780;
+    put(&mut f, el + 4, &u32::MAX.to_be_bytes());
+    put(&mut f, el + 12, &u32::MAX.to_be_bytes());
+    f[el + 20] = descriptor;
+    f[el + 22] = colorimetric;
+    f[el + 23] = bits;
+    put(&mut f, el + 24, &packing.to_be_bytes());
+    put(&mut f, el + 28, &2048u32.to_be_bytes());
+    f.extend_from_slice(data);
+    f
+}
+
+/// `pix_fmt` raw frame of ffmpeg's test picture at `w` × `h`.
+fn raw_picture(ff: &Path, w: u32, h: u32, pix_fmt: &str) -> Vec<u8> {
+    let alpha = if pix_fmt.contains('a') { ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='X*2+Y'" } else { "" };
+    let vf = format!("scale={w}:{h}{alpha}");
+    ffmpeg_out(ff, &["-f", "lavfi", "-i", "testsrc2=size=96x64", "-frames:v", "1", "-vf", &vf, "-f", "rawvideo", "-pix_fmt", pix_fmt, "-"])
+}
+
+/// A DPX file we built must import exactly like ffmpeg decodes it, within `tol` of its 16-bit
+/// decode rounded to 8 bits.
+fn dpx_matches(ff: &Path, name: &str, file: Vec<u8>, tol: u8) {
+    let path = dir().join(name);
+    std::fs::create_dir_all(dir()).unwrap();
+    std::fs::write(&path, &file).unwrap();
+    let src = filmcraft_codecs::open_bytes(name, file.into()).unwrap_or_else(|e| panic!("{name}: {e}"));
+    assert_eq!(src.info().kind, MediaKind::Still, "{name}");
+    let ours = rgba(&src.video_frame(FrameRequest::full(filmcraft_time::Tick(0))).unwrap());
+    let wide = ffmpeg_out(ff, &["-i", path.to_str().unwrap(), "-f", "rawvideo", "-pix_fmt", "rgba64le", "-"]);
+    let want: Vec<u8> = wide.as_chunks::<2>().0.iter().map(|c| ((u32::from(u16::from_le_bytes(*c)) * 255 + 32767) / 65535) as u8).collect();
+    assert_eq!(ours.len(), want.len(), "{name}");
+    let d = ours.iter().zip(&want).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+    assert!(d <= tol, "{name}: differs by {d}");
+    eprintln!("{name}: max diff {d}");
+}
+
+/// Packed 12-bit RGB (packing 0: components back to back, low bits first, lines on 32-bit
+/// boundaries) and 8-bit Y'CbCr (4:2:2, 4:4:4, 4:4:4:4 with alpha; BT.709, BT.601 and unspecified
+/// colorimetry), layouts ffmpeg reads but does not write, built here from ffmpeg's test picture
+/// (#841).
+#[test]
+fn dpx_packed_and_ycbcr_match_ffmpeg() {
+    let ff = filmcraft_testkit::require_ffmpeg!();
+    let (w, h) = (95u32, 63u32);
+    let rgb: Vec<u32> = raw_picture(&ff, w, h, "rgb48le").as_chunks::<2>().0.iter().map(|c| u32::from(u16::from_le_bytes(*c)) >> 4).collect();
+    let mut data = Vec::new();
+    for line in rgb.chunks(w as usize * 3) {
+        let (mut acc, mut n) = (0u64, 0u32);
+        for &v in line {
+            acc |= u64::from(v) << n;
+            n += 12;
+            while n >= 32 {
+                data.extend_from_slice(&(acc as u32).to_be_bytes());
+                acc >>= 32;
+                n -= 32;
+            }
+        }
+        if n > 0 {
+            data.extend_from_slice(&(acc as u32).to_be_bytes());
+        }
+    }
+    dpx_matches(&ff, "dpx_packed12.dpx", dpx_file(w, h, 50, 12, 0, 6, &data), 1);
+
+    // Y'CbCr: even width, scan lines a multiple of 4 bytes
+    let (w, h) = (96u32, 64u32);
+    let px = (w * h) as usize;
+    let uyvy = raw_picture(&ff, w, h, "uyvy422");
+    let yuv = raw_picture(&ff, w, h, "yuv444p");
+    let yuva = raw_picture(&ff, w, h, "yuva444p");
+    let interleave = |planes: &[u8], order: &[usize]| -> Vec<u8> { (0..px).flat_map(|i| order.iter().map(move |&p| planes[p * px + i])).collect() };
+    // planes are Y, U (Cb), V (Cr), A; DPX stores Cb Y Cr A
+    let cbycr = interleave(&yuv, &[1, 0, 2]);
+    let cbycra = interleave(&yuva, &[1, 0, 2, 3]);
+    for colorimetric in [6u8, 7, 0] {
+        dpx_matches(&ff, &format!("dpx_cbycry_{colorimetric}.dpx"), dpx_file(w, h, 100, 8, 0, colorimetric, &uyvy), 1);
+        dpx_matches(&ff, &format!("dpx_cbycr_{colorimetric}.dpx"), dpx_file(w, h, 102, 8, 0, colorimetric, &cbycr), 1);
+    }
+    dpx_matches(&ff, "dpx_cbycra.dpx", dpx_file(w, h, 103, 8, 0, 6, &cbycra), 1);
+}
+
 #[test]
 fn missing_frames_hold_the_previous_frame() {
     let ff = filmcraft_testkit::require_ffmpeg!();

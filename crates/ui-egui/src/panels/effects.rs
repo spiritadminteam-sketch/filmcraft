@@ -156,7 +156,9 @@ fn folder_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, key: &str, depth: usize
         t.text_dim,
     );
     icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 18.0, r.center().y), vec2(13.0, 13.0)), Icon::Folder, t.text_dim);
-    let name = key.rsplit('/').next().unwrap_or(key);
+    // a sub-folder key is `<top>/<folder>`; folder names may themselves contain a slash
+    // (Audio Effects ▸ Noise Reduction/Restoration), so split once, after the top folder
+    let name = if depth == 0 { key } else { key.split_once('/').map_or(key, |(_, folder)| folder) };
     ui.painter().text(pos2(x + 30.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::t(name), Tokens::ui(12.0), t.text);
     app.auto.add(&format!("effects.folder.{key}"), r, name);
     if resp.clicked() {

@@ -1,0 +1,66 @@
+# Fork-only: checks a merge of upstream into this fork on Linux (lockfile, fmt, clippy, the whole
+# test suite) and publishes the logs as a pre-release ("merge-check-<sha>") so they can be read
+# without the Actions log viewer.
+name: Merge check (Linux)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [merge-0.8.0]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: merge-check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: System libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libasound2-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev pkg-config ffmpeg
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: merge-check-linux
+          cache-on-failure: true
+      - name: Lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cargo update --workspace 2>&1 | tail -20
+          if ! git diff --quiet Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -q -m "Cargo.lock after the merge of upstream" Cargo.lock
+            git push -q origin HEAD:${GITHUB_REF_NAME} || echo "lockfile push failed"
+          fi
+      - name: fmt, clippy, tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e +o pipefail
+          fail=""
+          cargo fmt --all --check > fmt.log 2>&1 || fail="$fail fmt"
+          cargo clippy --workspace --all-targets -- -D warnings > clippy.log 2>&1 || fail="$fail clippy"
+          cargo xtask layers > layers.log 2>&1 || fail="$fail layers"
+          cargo xtask assets > assets.log 2>&1 || fail="$fail assets"
+          if [ -z "$fail" ] || ! grep -q "^error" clippy.log; then
+            cargo test --workspace --no-fail-fast > test.log 2>&1 || fail="$fail tests"
+          fi
+          grep -E "^(error|warning)(\[|:)|^---- |panicked|^failures:|FAILED|test result: FAILED" -A6 clippy.log test.log 2>/dev/null | head -400 > summary.log
+          echo "failed:${fail:- none}" | tee -a summary.log
+          gh release create "merge-check-${GITHUB_SHA::7}-${GITHUB_RUN_ATTEMPT}" summary.log fmt.log clippy.log layers.log assets.log $(ls test.log 2>/dev/null) --prerelease --target "$GITHUB_SHA" --title "merge check logs" --notes "failed:${fail:- none}" -R "$GITHUB_REPOSITORY" || true
+          [ -z "$fail" ]

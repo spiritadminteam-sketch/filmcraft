@@ -569,11 +569,15 @@ impl AacConfig {
         let (object_type, sample_rate, channel_config) = parse_asc(&asc).unwrap_or((0, 0, 0));
         AacConfig { asc, object_type, sample_rate, channel_config, max_bitrate: 0, avg_bitrate: 0, buffer_size: 0 }
     }
-    /// Channel count implied by the channel configuration (0 if unspecified).
+    /// Channel count implied by the channel configuration (ISO/IEC 14496-3 Table 1.19 with Amd 4:
+    /// 7 and 12 are 7.1 front / back, 11 is 6.1, 13 is 22.2, 14 is 7.1 with front heights), 0 if
+    /// unspecified (a PCE) or reserved.
     pub fn channels(&self) -> u32 {
         match self.channel_config {
             1..=6 => self.channel_config as u32,
-            7 => 8,
+            11 => 7,
+            7 | 12 | 14 => 8,
+            13 => 24,
             _ => 0,
         }
     }
@@ -1316,6 +1320,16 @@ impl SampleEntry {
     pub fn aac(asc: Vec<u8>, channels: u32, sample_rate: u32) -> Self {
         Self::audio(FourCc(*b"mp4a"), CodecConfig::Aac(AacConfig::from_asc(asc)), channels, sample_rate as f64, 16)
     }
+    /// FLAC entry (`fLaC` + `dfLa`) from the 34-byte STREAMINFO body: the only metadata block.
+    pub fn flac(streaminfo: &[u8; 34]) -> Self {
+        let mut blocks = vec![0x80, 0, 0, 34];
+        blocks.extend_from_slice(streaminfo);
+        let mut full = vec![0; 4];
+        full.extend_from_slice(&blocks);
+        let cfg = FlacConfig::parse(&full).unwrap_or(FlacConfig { metadata_blocks: blocks, ..Default::default() });
+        let (channels, rate, bits) = (u32::from(cfg.channels), f64::from(cfg.sample_rate), u16::from(cfg.bits_per_sample));
+        Self::audio(FourCc(*b"fLaC"), CodecConfig::Flac(cfg), channels, rate, bits)
+    }
     /// PCM entry. The muxer picks the on-disk format (`sowt`/`twos`/`lpcm` for MOV, `ipcm`/`fpcm` for MP4).
     pub fn pcm(cfg: PcmConfig) -> Self {
         Self::audio(FourCc(*b"lpcm"), CodecConfig::Pcm(cfg), cfg.channels, cfg.sample_rate, cfg.bits)
@@ -1630,6 +1644,13 @@ mod tests {
         assert_eq!(VpcConfig::parse(&v.to_bytes()).unwrap(), v);
         let o = OpusConfig { output_channels: 2, pre_skip: 312, input_sample_rate: 48000, output_gain: 0, channel_mapping_family: 0, channel_mapping: vec![] };
         assert_eq!(OpusConfig::parse(&o.to_bytes()).unwrap(), o);
+    }
+
+    #[test]
+    fn aac_channel_configuration_is_an_index() {
+        // 48 kHz AAC LC: configuration → channels (Table 1.19 with Amd 4; #922)
+        let channels = |c: u16| AacConfig::from_asc(((2 << 11) | (3 << 7) | (c << 3)).to_be_bytes().to_vec()).channels();
+        assert_eq!([0, 1, 6, 7, 8, 11, 12, 13, 14, 15].map(channels), [0, 1, 6, 8, 0, 7, 8, 24, 8, 0]);
     }
 
     #[test]

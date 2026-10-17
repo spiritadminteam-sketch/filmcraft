@@ -8,7 +8,9 @@ use filmcraft_apv::{
 };
 
 fn ffmpeg() -> Option<PathBuf> {
-    filmcraft_testkit::ffmpeg_or_skip("apv oracle")
+    // The APV demuxer is new in ffmpeg 8.0; older toolchains are found but
+    // cannot read the fixtures, so they skip like a missing tool (#1249).
+    filmcraft_testkit::ffmpeg_with_format_or_skip("apv oracle", "apv", "8.0")
 }
 
 fn fixture_dir() -> PathBuf {
