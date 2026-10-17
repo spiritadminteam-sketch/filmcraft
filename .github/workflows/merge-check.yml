@@ -62,5 +62,9 @@ jobs:
           fi
           grep -E "^(error|warning)(\[|:)|^---- |panicked|^failures:|FAILED|test result: FAILED" -A6 clippy.log test.log 2>/dev/null | head -400 > summary.log
           echo "failed:${fail:- none}" | tee -a summary.log
-          gh release create "merge-check-${GITHUB_SHA::7}-${GITHUB_RUN_ATTEMPT}" summary.log fmt.log clippy.log layers.log assets.log $(ls test.log 2>/dev/null) --prerelease --target "$GITHUB_SHA" --title "merge check logs" --notes "failed:${fail:- none}" -R "$GITHUB_REPOSITORY" || true
+          head -c 60000 fmt.log > fmt-head.log
+          for f in summary.log fmt-head.log; do
+            msg=$(head -c 3500 "$f" | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g'); echo "::error title=$f::$msg"
+          done
+          gh release create "merge-check-${GITHUB_SHA::7}-${GITHUB_RUN_ATTEMPT}" summary.log fmt.log clippy.log layers.log assets.log $(ls test.log 2>/dev/null) --prerelease --target "$GITHUB_SHA" --title "merge check logs" --notes "failed:${fail:- none}" -R "$GITHUB_REPOSITORY" 2>&1 || echo "::error title=release::could not publish the logs"
           [ -z "$fail" ]
