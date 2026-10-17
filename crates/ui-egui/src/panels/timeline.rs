@@ -2155,7 +2155,18 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                     .filter(|i| if fwd { i.end() > t } else { i.start < t })
                     .map(|i| i.id.0)
                     .collect();
+                let n = ids.len();
                 let _ = app.session.execute("timeline.select", json!({"clips": ids}));
+                // One click per pick: the tool hands back to the Selection tool. Its shortcut (A)
+                // is easy to hit by accident (typing outside a text field), and left on, every
+                // click on a caption selected the whole rest of the timeline and every click on
+                // empty space re-selected everything after it.
+                app.ui.tool = Tool::Selection;
+                app.ui.status = format!(
+                    "{}: selected {n} clips {}. Back to the Selection tool.",
+                    if fwd { "Track Select Forward" } else { "Track Select Backward" },
+                    if fwd { "from here on" } else { "up to here" }
+                );
                 None
             }
             (Tool::Selection | Tool::Ripple | Tool::Rolling, Grab::Edge { clip, edge, track, .. }) if resp.clicked() => {
