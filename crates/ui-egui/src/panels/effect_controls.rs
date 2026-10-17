@@ -256,6 +256,43 @@ pub(crate) fn select_all_keyframes(app: &mut FilmcraftApp) -> bool {
     true
 }
 
+/// Run `cmds` as one undo step named `label` (each keyframe command is its own step otherwise).
+fn run_as_one_step(app: &mut FilmcraftApp, label: &str, cmds: Vec<(String, Value)>) {
+    let before = app.session.history.undo.len();
+    for (c, p) in cmds {
+        if let Err(e) = app.session.execute(&c, p) {
+            app.ui.status = e.to_string();
+        }
+    }
+    let h = &mut app.session.history;
+    // (at the undo limit the oldest steps are dropped as new ones come, so nothing is folded)
+    if h.undo.len() > before + 1 {
+        h.undo.truncate(before + 1);
+        if let Some(u) = h.undo.get_mut(before) {
+            u.0 = label.to_string();
+        }
+    }
+}
+
+/// Delete the selected keyframes, in one undo step. A parameter left without keyframes keeps the
+/// value it had (`effects.deleteKeyframe`).
+pub(crate) fn delete_selected_keyframes(app: &mut FilmcraftApp) {
+    let cmds = app
+        .ui
+        .keyframe_selection
+        .iter()
+        .map(|k| {
+            let mut v = json!({"clip": k.clip, "effect": k.effect, "param": k.param, "mediaTime": k.time.0});
+            if let Some(m) = k.mask {
+                v["mask"] = json!(m);
+            }
+            ("effects.deleteKeyframe".to_string(), v)
+        })
+        .collect();
+    run_as_one_step(app, "Delete Keyframes", cmds);
+    app.ui.keyframe_selection.clear();
+}
+
 fn selected_clip(app: &FilmcraftApp) -> Option<(ClipId, TrackItem, TrackKind)> {
     selected_clips(app).into_iter().next()
 }
@@ -1595,7 +1632,7 @@ mod lane_tests {
     use super::*;
 
     /// A context with the app's fonts (the panels use the semibold family).
-    fn context() -> egui::Context {
+    pub(super) fn context() -> egui::Context {
         let ctx = egui::Context::default();
         crate::theme::install(&ctx, &Tokens::for_kind(Default::default()));
         ctx
@@ -1847,7 +1884,7 @@ mod graph_drag_tests {
         let rate = filmcraft_time::FrameRate { num: 24, den: 1 };
         it.start = rate.tick_of(24 * 60);
         it.duration = rate.tick_of(24 * 5);
-        let ctx = context();
+        let ctx = super::lane_tests::context();
         let t = Tokens::for_kind(Default::default());
         let ruler = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, RULER_H));
         // the view starts 2 s in (start 0.4 of the clip)
