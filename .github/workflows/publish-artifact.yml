@@ -1,0 +1,35 @@
+# Fork-only: republish a finished run's Windows build artifact as a pre-release (when the run's
+# own publish step failed after the build succeeded).
+name: Publish a build artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id whose artifact to publish"
+        required: true
+      tag:
+        description: "Release tag"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          ls -R dist
+          cd dist/*/ && zip -q ../../filmcraft-test-windows-x64.zip filmcraft.exe filmcraft-cli.exe filmcraft-plugin-host.exe && cd ../..
+          gh release create "${{ inputs.tag }}" filmcraft-test-windows-x64.zip --prerelease --title "Test build ${{ inputs.tag }}" --notes "Republished from run ${{ inputs.run_id }}." -R "$GITHUB_REPOSITORY"
