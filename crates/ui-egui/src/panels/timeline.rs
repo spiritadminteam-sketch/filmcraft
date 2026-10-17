@@ -2169,7 +2169,22 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 );
                 None
             }
-            (Tool::Selection | Tool::Ripple | Tool::Rolling, Grab::Edge { clip, edge, track, .. }) if resp.clicked() => {
+            // A plain click on a clip's edge with the Selection tool selects the clip, as a click
+            // on its middle does. It used to select the cut as an edit point and open the trim
+            // monitor, which kept happening by accident while picking captions. Dragging the edge
+            // still trims; the Ripple and Rolling tools still select edit points.
+            (Tool::Selection, Grab::Edge { clip, .. }) if resp.clicked() => {
+                let r = if mods.shift {
+                    app.session.execute("timeline.select", json!({"clips": [clip.0], "toggle": true}))
+                } else {
+                    app.session.execute("timeline.select", json!({"clips": [clip.0]}))
+                };
+                if let Err(e) = r {
+                    app.ui.status = e.to_string();
+                }
+                None
+            }
+            (Tool::Ripple | Tool::Rolling, Grab::Edge { clip, edge, track, .. }) if resp.clicked() => {
                 // click an edge = select it as an edit point (trim mode); Shift adds
                 let kind = match tool {
                     Tool::Rolling => "roll",

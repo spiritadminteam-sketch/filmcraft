@@ -197,11 +197,11 @@ fn right_of_a_cut_trims_the_right_clip() {
     assert_eq!(d.span(city), city0, "City_Night_Drive is untouched");
 }
 
-/// A click that wobbles 5.5 px (still a click to egui, under its 6 pt limit) selects the edit point
-/// that was pressed. It used to be hit-tested where the button came up, 8.5 px inside the clip and
-/// outside the edge zone, and selected the clip.
+/// A click on a clip's edge with the Selection tool selects the clip and opens no Trim Monitor
+/// (it used to select the cut as an edit point, which kept happening by accident while picking
+/// captions). A wobbly click (5.5 px, still a click to egui) counts the same.
 #[test]
-fn a_wobbly_click_on_an_edge_selects_the_edit_point() {
+fn a_click_on_an_edge_selects_the_clip_not_the_edit_point() {
     let mut d = Driver::demo();
     let city = d.v1_clip(CITY);
     let st = &mut d.harness.state_mut().session.state;
@@ -210,8 +210,8 @@ fn a_wobbly_click_on_an_edge_selects_the_edit_point() {
     let (_, x1, y) = d.edges(city);
     d.drag(pos2(x1 - 3.0, y), pos2(x1 - 8.5, y), 3);
     let st = &d.app().session.state;
-    assert!(st.edit_points.iter().any(|e| e.clip == ClipId(city) && e.out), "City_Night_Drive's Out edge is the edit point: {:?}", st.edit_points);
-    assert!(!st.selection.contains(&ClipId(city)), "the clip is not selected");
+    assert!(st.edit_points.is_empty(), "no edit point selected: {:?}", st.edit_points);
+    assert!(st.selection.contains(&ClipId(city)), "the clip is selected");
 }
 
 /// A moved clip stays under the point it was grabbed by. It used to lag behind the pointer by the
