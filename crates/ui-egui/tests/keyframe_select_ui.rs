@@ -90,17 +90,6 @@ impl Driver {
     fn rect(&mut self, id: &str) -> [f64; 4] {
         self.find(id).unwrap_or_else(|| panic!("no element {id}"))
     }
-    /// The lane's zoom and start.
-    fn view(&mut self) -> (f32, f32) {
-        self.frames(2);
-        let v = self.harness.state().ui.keyframe_view;
-        (v.zoom, v.start)
-    }
-    fn seek_fraction(&mut self, clip: &Clip, f: f64) {
-        let t = clip.start + (clip.duration as f64 * f) as i64;
-        self.exec("playhead.set", json!({"time": t}));
-        self.frames(3);
-    }
     fn shot(&mut self, name: &str) {
         let Some(dir) = self.shots.clone() else { return };
         for _ in 0..40 {
