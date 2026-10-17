@@ -7,8 +7,9 @@
 //! Right of the settings, as in Premiere, is the transition's own timeline (#577): a time ruler over
 //! the cut, the outgoing clip (A) above, the incoming clip (B) below and the transition between
 //! them. Dragging the transition's middle slides it over the cut; dragging one of its ends changes
-//! its duration from that end, the other staying put (the Timeline's rules,
-//! [`trn::drag_span`]); each drag is one undo step. Clicking or dragging the ruler moves the
+//! its duration, the other end moving the opposite way so a centred transition stays centred; Shift
+//! moves the dragged end only (the Timeline's rules, [`trn::drag_span_linked`] / [`trn::drag_span`]);
+//! each drag is one undo step. Clicking or dragging the ruler moves the
 //! playhead. The divider between the settings and the timeline is the clip view's.
 //!
 //! Not here yet: the A/B preview thumbnails with their Start / End sliders, Show Actual Sources,
@@ -339,7 +340,9 @@ fn timeline(app: &mut FilmcraftApp, ui: &mut egui::Ui, lane: Rect, id: Transitio
     {
         let delta = rate.snap_nearest(ticks_for(lane, d.view, pos.x - d.from_x));
         let was = Transition { start: d.start, duration: d.duration, ..x.clone() };
-        if let Some((st, du)) = trn::drag_span(track, &was, d.edge, delta, frame)
+        // both ends move together (Premiere); Shift drags one end only
+        let span_of = if ui.input(|i| i.modifiers.shift) { trn::drag_span } else { trn::drag_span_linked };
+        if let Some((st, du)) = span_of(track, &was, d.edge, delta, frame)
             && (st, du) != (x.start, x.duration)
         {
             change = Some(json!({"start": st.0, "duration": du.0, "merge": true, "begin": !d.begun}));

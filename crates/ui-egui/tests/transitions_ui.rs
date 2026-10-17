@@ -177,23 +177,37 @@ fn click_selects_a_transition_and_delete_removes_it() {
     assert_eq!(d.exec("sequence.inspect", json!({}))["transitionSelection"], json!([]));
 }
 
-/// Dragging a transition's end trims that end only (#224); dragging its middle slides it over the
-/// cut (Custom Start). Each drag is one undo step.
+/// Dragging a transition's end moves both its ends, so a centred one stays centred (Premiere);
+/// Shift drags that end only (#224). Dragging its middle slides it over the cut (Custom Start).
+/// Each drag is one undo step.
 #[test]
 fn dragging_a_transition_end_or_middle() {
     let mut d = Driver::demo();
     let c = d.crossing();
     let frame = frame_ticks(d.rate());
     let undo_before = d.exec("sequence.inspect", json!({}));
+    let align = d.transition(c.id).unwrap()["align"].clone();
     let (x, y, w, h, _) = d.find(&format!("timeline.transition.{}.out", c.id)).expect("the transition's end");
     let (fx, fy) = (x + w / 2.0, y + h / 2.0);
     d.ok("ui.drag", json!({"from": {"x": fx, "y": fy}, "to": {"x": fx + 40.0, "y": fy}, "steps": 8}));
     d.frames(3);
+    let x0 = d.transition(c.id).unwrap();
+    let (s0, d0) = (x0["start"].as_i64().unwrap(), x0["duration"].as_i64().unwrap());
+    assert!(d0 > c.duration, "dragging the end out lengthens it: {} -> {d0}", c.duration);
+    let grew = c.start - s0;
+    assert!(grew > 0 && grew % frame == 0, "the start moved out too, by whole frames: {} -> {s0}", c.start);
+    assert_eq!(s0 + d0, c.start + c.duration + grew, "both ends moved by the same amount");
+    assert_eq!(x0["align"], align, "still aligned as before");
+    // Shift: that end only
+    let (x, y, w, h, _) = d.find(&format!("timeline.transition.{}.out", c.id)).expect("the transition's end");
+    let (fx, fy) = (x + w / 2.0, y + h / 2.0);
+    d.ok("ui.drag", json!({"from": {"x": fx, "y": fy}, "to": {"x": fx + 40.0, "y": fy}, "steps": 8, "modifiers": {"shift": true}}));
+    d.frames(3);
     let x1 = d.transition(c.id).unwrap();
     let (s1, d1) = (x1["start"].as_i64().unwrap(), x1["duration"].as_i64().unwrap());
-    assert!(d1 > c.duration, "dragging the end out lengthens it: {} -> {d1}", c.duration);
-    assert_eq!(s1, c.start, "the start stays where it was");
-    assert_eq!((d1 - c.duration) % frame, 0, "by whole frames");
+    assert!(d1 > d0, "Shift-dragging the end out lengthens it: {d0} -> {d1}");
+    assert_eq!(s1, s0, "the start stays where it was");
+    assert_eq!((d1 - d0) % frame, 0, "by whole frames");
     assert_eq!(x1["align"], json!("custom"), "no longer centred: Custom Start");
     // the middle: slide it right of centre
     let (x, y, w, h, _) = d.find(&format!("timeline.transition.{}", c.id)).unwrap();
@@ -207,9 +221,10 @@ fn dragging_a_transition_end_or_middle() {
     assert!(x2["start"].as_i64().unwrap() <= c.cut, "still over the cut");
     // off-centre (Custom Start), or Start at Cut if the slide reached the cut, where it stops
     assert!(matches!(x2["align"].as_str(), Some("custom" | "start")), "{}", x2["align"]);
-    // two drags, two undo steps
-    d.exec("edit.undo", json!({}));
-    d.exec("edit.undo", json!({}));
+    // three drags, three undo steps
+    for _ in 0..3 {
+        d.exec("edit.undo", json!({}));
+    }
     let back = d.transition(c.id).unwrap();
     assert_eq!((back["start"].as_i64(), back["duration"].as_i64()), (Some(c.start), Some(c.duration)), "{undo_before}");
 }
@@ -297,10 +312,10 @@ fn transition_timeline_in_effect_controls() {
     let (a, b) = (d.label("effectControls.transition.timeline.a"), d.label("effectControls.transition.timeline.b"));
     assert!(names.contains(&a) && names.contains(&b), "A {a:?} and B {b:?} are the clips at the cut: {names:?}");
     d.snapshot("transition-effect-controls-timeline");
-    // its end: drag it right
+    // its end: Shift-drag it right (that end only; a plain drag moves both, as in the Timeline)
     let (x, y, w, h, _) = d.find("effectControls.transition.timeline.span.out").expect("the transition's end in Effect Controls");
     let (fx, fy) = (x + w / 2.0, y + h / 2.0);
-    d.ok("ui.drag", json!({"from": {"x": fx, "y": fy}, "to": {"x": fx + 30.0, "y": fy}, "steps": 8}));
+    d.ok("ui.drag", json!({"from": {"x": fx, "y": fy}, "to": {"x": fx + 30.0, "y": fy}, "steps": 8, "modifiers": {"shift": true}}));
     d.frames(3);
     let x1 = d.transition(c.id).unwrap();
     let (s1, d1) = (x1["start"].as_i64().unwrap(), x1["duration"].as_i64().unwrap());

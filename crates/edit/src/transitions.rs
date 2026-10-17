@@ -187,6 +187,34 @@ pub fn drag_span(track: &Track, tr: &Transition, edge: Option<Edge>, delta: Tick
     }
 }
 
+/// Where dragging an end of a transition by `delta` puts it when both its ends move together, as
+/// `(start, duration)`: the dragged end moves by `delta` and the other end by the same amount the
+/// other way, so a transition centred on its cut stays centred (how Premiere resizes one in the
+/// Timeline; Shift drags one end only, [`drag_span`]). A transition sitting on one side of its cut
+/// (Start or End at Cut), a fade, or a drag of its middle behaves as [`drag_span`]. Clamped so
+/// both ends stay within its clips, on their side of the cut, at least one `frame` long.
+pub fn drag_span_linked(track: &Track, tr: &Transition, edge: Option<Edge>, delta: Tick, frame: Tick) -> Option<(Tick, Tick)> {
+    let (lo, cut, hi) = bounds(track, tr)?;
+    let (s0, e0, d0) = (tr.start, tr.end(), tr.duration);
+    let straddles = tr.from.is_some() && tr.to.is_some() && s0 < cut && cut < e0;
+    let grow = match edge {
+        Some(Edge::Out) if straddles => delta.0,
+        Some(Edge::In) if straddles => delta.0.saturating_neg(),
+        _ => return drag_span(track, tr, edge, delta, frame),
+    };
+    let frame = frame.max(Tick(1)).0;
+    // each end moves `g` outwards: start - g >= lo, end + g <= hi; shrinking (g < 0) stops when
+    // an end reaches the cut or the transition is down to one frame
+    let max_g = s0.0.saturating_sub(lo.0).min(hi.0.saturating_sub(e0.0)).max(0);
+    let max_shrink = cut.0.saturating_sub(s0.0).min(e0.0.saturating_sub(cut.0)).min(d0.0.saturating_sub(frame).div_euclid(2)).max(0);
+    let min_g = max_shrink.saturating_neg();
+    if min_g > max_g {
+        return Some((s0, d0));
+    }
+    let g = grow.clamp(min_g, max_g);
+    Some((Tick(s0.0.saturating_sub(g)), Tick(d0.0.saturating_add(g.saturating_mul(2)))))
+}
+
 /// Remove transitions (on unlocked tracks). Returns how many went.
 pub fn remove(seq: &mut Sequence, ids: &[TransitionId]) -> Result<usize> {
     if seq.all_tracks().any(|t| t.locked && t.transitions.iter().any(|x| ids.contains(&x.id))) {
@@ -345,6 +373,38 @@ mod tests {
         let (t, x) = find(q, TransitionId(id)).unwrap();
         let (st, d) = drag_span(t, x, edge, f(frames), f(1)).unwrap();
         (R.frame_at(st), R.frame_at(d))
+    }
+
+    fn drag_linked(q: &Sequence, id: u64, edge: Option<Edge>, frames: i64) -> (i64, i64) {
+        let (t, x) = find(q, TransitionId(id)).unwrap();
+        let (st, d) = drag_span_linked(t, x, edge, f(frames), f(1)).unwrap();
+        (R.frame_at(st), R.frame_at(d))
+    }
+
+    #[test]
+    fn dragging_an_end_moves_both_ends_together() {
+        let mut q = seq();
+        // centred 36..60 over the cut at 48: both ends move, it stays centred
+        assert_eq!(drag_linked(&q, 1, Some(Edge::Out), 6), (30, 36));
+        assert_eq!(drag_linked(&q, 1, Some(Edge::In), -6), (30, 36));
+        assert_eq!(drag_linked(&q, 1, Some(Edge::Out), -4), (40, 16));
+        assert_eq!(drag_linked(&q, 1, Some(Edge::In), 4), (40, 16));
+        // stops at the clips' ends (0 and 96) and when an end reaches the cut
+        assert_eq!(drag_linked(&q, 1, Some(Edge::Out), 100), (0, 96));
+        assert_eq!(drag_linked(&q, 1, Some(Edge::Out), -100), (47, 2), "it stops at one frame each side of the cut");
+        // the middle still slides it
+        assert_eq!(drag_linked(&q, 1, None, 5), (41, 24));
+        // off-centre (40..60): both ends move by the same amount, until the nearer clip end
+        set_span(&mut q, TransitionId(1), f(40), f(20), f(1), f(1)).unwrap();
+        assert_eq!(drag_linked(&q, 1, Some(Edge::Out), 3), (37, 26));
+        assert_eq!(drag_linked(&q, 1, Some(Edge::Out), -100), (48, 4), "the start reached the cut");
+        // Start at Cut (48..60) and fades: one end, as a plain drag
+        set_span(&mut q, TransitionId(1), f(48), f(12), f(1), f(1)).unwrap();
+        assert_eq!(drag_linked(&q, 1, Some(Edge::Out), 6), (48, 18));
+        assert_eq!(drag_linked(&q, 2, Some(Edge::Out), 3), (0, 15));
+        // hostile deltas never overflow
+        let (t, x) = find(&q, TransitionId(1)).unwrap();
+        assert!(drag_span_linked(t, x, Some(Edge::In), Tick(i64::MIN), f(1)).is_some());
     }
 
     #[test]

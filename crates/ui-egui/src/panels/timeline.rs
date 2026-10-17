@@ -2370,9 +2370,10 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             }
             Drag::Transition { id, edge, from, start, duration } => {
                 let delta = rate.snap_nearest(t_here - from);
-                let span = seq.all_tracks().find_map(|tr| {
-                    tr.transitions.iter().find(|x| x.id == id).and_then(|x| filmcraft_edit::transitions::drag_span(tr, x, edge, delta, rate.frame_duration()))
-                });
+                // dragging an end moves both ends together, as in Premiere; Shift drags one end only
+                let span_of = if mods.shift { filmcraft_edit::transitions::drag_span } else { filmcraft_edit::transitions::drag_span_linked };
+                let span =
+                    seq.all_tracks().find_map(|tr| tr.transitions.iter().find(|x| x.id == id).and_then(|x| span_of(tr, x, edge, delta, rate.frame_duration())));
                 let (start, duration) = span.unwrap_or((start, duration));
                 Some(Drag::Transition { id, edge, from, start, duration })
             }
