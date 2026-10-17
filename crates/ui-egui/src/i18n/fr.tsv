@@ -563,7 +563,10 @@
 	{n}. (empty)	{n}. (vide)
 	Restore	Restaurer
 	Overwrite with Current View	Remplacer par la vue actuelle
-	Graphics text search arrives with M10.1–M10.2	La recherche de texte dans les graphiques arrive avec M10.1–M10.2
+	Open a sequence to search its graphics	Ouvrez une séquence pour rechercher dans ses graphiques
+	No text graphics in this sequence.	Aucun graphique texte dans cette séquence.
+	No matching graphics.	Aucun graphique correspondant.
+	{n} of {total}	{n} sur {total}
 	Open a sequence to work with captions	Ouvrez une séquence pour travailler sur les sous-titres
 	Add captions	Ajouter des sous-titres
 	Create a caption track or import a caption file.	Créez une piste de sous-titres ou importez un fichier de sous-titres.

@@ -558,7 +558,10 @@
 	{n}. (empty)	{n}. (空き)
 	Restore	復元
 	Overwrite with Current View	現在の表示で上書き
-	Graphics text search arrives with M10.1–M10.2	グラフィックスのテキスト検索は M10.1–M10.2 で対応予定です
+	Open a sequence to search its graphics	グラフィックスを検索するにはシーケンスを開いてください
+	No text graphics in this sequence.	このシーケンスにテキストグラフィックスはありません。
+	No matching graphics.	一致するグラフィックスはありません。
+	{n} of {total}	{n} / {total}
 	Open a sequence to work with captions	キャプションを扱うにはシーケンスを開いてください
 	Add captions	キャプションを追加
 	Create a caption track or import a caption file.	キャプショントラックを作成するか、キャプションファイルを読み込んでください。

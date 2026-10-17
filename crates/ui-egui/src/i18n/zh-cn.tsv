@@ -552,7 +552,10 @@
 	{n}. (empty)	{n}.（空）
 	Restore	恢复
 	Overwrite with Current View	用当前视图覆盖
-	Graphics text search arrives with M10.1–M10.2	图形文本搜索将在 M10.1–M10.2 中推出
+	Open a sequence to search its graphics	打开序列以搜索其中的图形
+	No text graphics in this sequence.	此序列中没有文本图形。
+	No matching graphics.	没有匹配的图形。
+	{n} of {total}	第 {n} 个，共 {total} 个
 	Open a sequence to work with captions	打开一个序列以编辑字幕
 	Add captions	添加字幕
 	Create a caption track or import a caption file.	创建字幕轨道或导入字幕文件。

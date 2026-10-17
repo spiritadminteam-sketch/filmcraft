@@ -3,7 +3,9 @@
 //! merge, delete), track choice and the track style. Every edit dispatches a `captions.*` engine
 //! command; every widget registers an automation id (`text.*`). The Transcript tab shows the
 //! sequence transcript as speaker paragraphs of clickable words (click, Shift+click to extend);
-//! the selection marks In/Out and can be extracted or lifted (`transcript.*` commands).
+//! the selection marks In/Out and can be extracted or lifted (`transcript.*` commands). The
+//! Graphics tab lists every text graphic of the sequence (captions made as graphics included),
+//! searchable; a click puts the playhead on the graphic and selects it.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use filmcraft_project::{CaptionAlign, CaptionAnchor, CaptionFormat};
@@ -57,7 +59,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     match app.ui.text_tab.as_str() {
         "Captions" => captions(app, ui, body),
         "Transcript" => transcript(app, ui, body),
-        _ => crate::dock::placeholder(ui, body, &t, tl!("Graphics text search arrives with M10.1–M10.2")),
+        _ => graphics(app, ui, body),
     }
 }
 
@@ -455,6 +457,95 @@ fn style_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, track_idx: us
             }
         }
     });
+}
+
+/// The text of a clip's text graphic (`graphic_text`), if it has one.
+fn graphic_text(it: &filmcraft_project::TrackItem) -> Option<&str> {
+    it.effects.iter().find(|e| e.effect == "graphic_text").and_then(|e| e.param("text")).and_then(|p| match &p.value {
+        filmcraft_project::ParamValue::Text(s) => Some(s.as_str()),
+        _ => None,
+    })
+}
+
+/// Text panel ▸ Graphics: every text graphic of the active sequence in time order, filtered by the
+/// search text; a click goes to the graphic and selects it (Shift/Ctrl adds to the selection).
+fn graphics(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
+    let t = app.tokens;
+    let Some(seq) = app.session.active_sequence().cloned() else {
+        crate::dock::placeholder(ui, rect, &t, tl!("Open a sequence to search its graphics"));
+        return;
+    };
+    let mut actions: Vec<(String, Value)> = Vec::new();
+    let rate = seq.settings.frame_rate;
+    let df = seq.settings.drop_frame;
+    let tc = |x: filmcraft_time::Tick| format_time(x, rate, df, TimeDisplay::Timecode, 48_000);
+    let mut items: Vec<(usize, &filmcraft_project::TrackItem, &str)> =
+        seq.video_tracks.iter().enumerate().flat_map(|(n, tr)| tr.items.iter().filter_map(move |it| graphic_text(it).map(|txt| (n, it, txt)))).collect();
+    items.sort_by_key(|(n, it, _)| (it.start, *n));
+
+    let bar = Rect::from_min_size(rect.min + vec2(10.0, 2.0), vec2(rect.width() - 20.0, 26.0));
+    let w = 220.0f32.min(bar.width() * 0.6);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(bar.min, vec2(w, 24.0))));
+    let sresp = crate::widgets::search_field(&mut child, &mut app.ui.graphics_search, tl!("Search"), w, &t);
+    app.auto.add("text.graphics.search", sresp.rect, "Search graphics");
+    let q = app.ui.graphics_search.to_lowercase();
+    let shown: Vec<_> = items.iter().filter(|(_, _, txt)| q.is_empty() || txt.to_lowercase().contains(&q)).collect();
+    ui.painter().text(
+        pos2(bar.max.x, bar.center().y),
+        Align2::RIGHT_CENTER,
+        tlf!("{n} of {total}", n = shown.len(), total = items.len()),
+        Tokens::ui(11.5),
+        t.text_dim,
+    );
+
+    let list = Rect::from_min_max(pos2(rect.min.x + 6.0, bar.max.y + 8.0), pos2(rect.max.x - 6.0, rect.max.y - 6.0));
+    ui.painter().rect_filled(list, 3.0, t.app_bg);
+    let ph = app.session.playhead();
+    let sel = app.session.state.selection.clone();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list.shrink(4.0)).id_salt("graphics-list"));
+    egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("graphics-scroll").show(&mut child, |ui| {
+        ui.set_width(list.width() - 12.0);
+        for (i, (n, it, txt)) in shown.iter().enumerate() {
+            let selected = sel.contains(&it.id);
+            let under = it.start <= ph && ph < it.start + it.duration;
+            let fill = if selected {
+                t.row_selected
+            } else if i % 2 == 1 {
+                t.row_alt
+            } else {
+                Color32::TRANSPARENT
+            };
+            let fr = egui::Frame::NONE.fill(fill).inner_margin(egui::Margin::symmetric(6, 4)).corner_radius(3.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(tc(it.start)).font(Tokens::mono(11.0)).color(t.hot_text));
+                    ui.label(egui::RichText::new(format!("V{}", n + 1)).size(11.0).color(t.text_dim));
+                    let one_line = txt.replace(['\n', '\r'], " ");
+                    ui.add(egui::Label::new(egui::RichText::new(one_line).size(12.5).color(t.text)).truncate());
+                });
+            });
+            let row = fr.response.rect;
+            let resp = ui.interact(row, egui::Id::new(("graphics-row", it.id.0)), Sense::click());
+            if under {
+                ui.painter().rect_stroke(row, 3.0, Stroke::new(1.0, t.accent), StrokeKind::Inside);
+            }
+            app.auto.add(&format!("text.graphics.{}.row", it.id.0), row, txt);
+            if resp.clicked() {
+                let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+                if !add {
+                    actions.push(("playhead.set".into(), json!({"time": it.start.0})));
+                }
+                actions.push(("timeline.select".into(), json!({"clips": [it.id.0], "add": add})));
+            }
+            ui.add_space(2.0);
+        }
+        if shown.is_empty() {
+            ui.label(
+                egui::RichText::new(if items.is_empty() { tl!("No text graphics in this sequence.") } else { tl!("No matching graphics.") })
+                    .color(t.text_faint),
+            );
+        }
+    });
+    run(app, ui, actions);
 }
 
 fn run(app: &mut FilmcraftApp, ui: &egui::Ui, actions: Vec<(String, Value)>) {
