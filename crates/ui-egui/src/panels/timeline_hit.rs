@@ -87,7 +87,7 @@ fn marker_grab_rect(layout: &Layout, start: Tick, chapter: bool) -> Rect {
 pub const MARKER_GRAB_PX: f32 = 8.0;
 
 /// The marker under `pos` on the ruler: the nearest one when the grab areas of several overlap.
-fn marker_under(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<&filmcraft_project::Marker> {
+fn marker_under<'a>(seq: &'a Sequence, layout: &Layout, pos: Pos2) -> Option<&'a filmcraft_project::Marker> {
     if !pos.x.is_finite() || !pos.y.is_finite() {
         return None;
     }
@@ -475,7 +475,7 @@ mod tests {
             name: String::new(),
             comment: String::new(),
             kind,
-            color: Label::Red,
+            color: Label::Green,
         };
         seq.markers.push(mk(1, 3.0, filmcraft_project::MarkerKind::Comment));
         seq.markers.push(mk(2, 6.0, filmcraft_project::MarkerKind::Chapter));
