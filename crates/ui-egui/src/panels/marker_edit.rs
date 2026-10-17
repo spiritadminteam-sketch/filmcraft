@@ -1,11 +1,8 @@
-//! Editing a sequence marker, as in Premiere: its right-click menu (a colour, Edit Marker…,
-//! Clear Selected Marker, Clear Markers) and the Marker dialog (name, comments, colour, duration)
-//! opened from it or by double-clicking the marker on the Timeline ruler or in the Markers panel.
+//! The Marker dialog, as in Premiere (name, comments, colour, duration, Delete), opened by
+//! double-clicking a marker on the Timeline ruler or in the Markers panel, or with Edit Marker… in
+//! its right-click menu (`panels::misc::marker_edit_item`).
 //!
-//! Automation ids: `<prefix>.color.<Label>`, `<prefix>.edit`, `<prefix>.markers.clearCurrent`,
-//! `<prefix>.markers.clearAll` for the menu (`prefix` is `timeline.markerMenu` or
-//! `markers.menu`); `markerDialog.{name,comment,duration,color.<Label>,delete,cancel,ok}` for the
-//! dialog.
+//! Automation ids: `markerDialog.{name,comment,duration,color.<Label>,delete,cancel,ok}`.
 
 use egui::{Align2, Color32, Rect, Sense, vec2};
 use filmcraft_project::{Label, MarkerId};
@@ -39,53 +36,6 @@ pub(crate) fn open_dialog(app: &mut FilmcraftApp, id: u64) {
         color: m.color.name().to_string(),
         duration_frames: rate.frame_at(m.duration).max(0),
     });
-}
-
-/// The right-click menu of marker `id` (the playhead is already on it, where Clear Selected
-/// Marker looks for it).
-pub(crate) fn menu(app: &mut FilmcraftApp, ctx: &egui::Context, ui: &mut egui::Ui, id: u64, prefix: &str) {
-    let current = app.session.active_sequence().and_then(|q| q.markers.iter().find(|m| m.id == MarkerId(id))).map(|m| m.color.marker_rgb());
-    let mut elems: Vec<(String, Rect, String)> = Vec::new();
-    // a colour, one click
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        for l in MARKER_FILTER {
-            let r = swatch(ui, l, current == Some(l.marker_rgb()));
-            elems.push((format!("{prefix}.color.{}", l.name()), r.rect, l.name().to_string()));
-            if r.clicked() {
-                if let Err(e) = app.session.execute("markers.edit", json!({"marker": id, "color": l.name()})) {
-                    app.ui.status = e.to_string();
-                }
-                ui.close();
-            }
-        }
-    });
-    let r = ui.button(crate::i18n::t("Edit Marker…"));
-    elems.push((format!("{prefix}.edit"), r.rect, "Edit Marker…".into()));
-    if r.clicked() {
-        open_dialog(app, id);
-        ui.close();
-    }
-    ui.separator();
-    for (label, cmd) in [("Clear Selected Marker", "markers.clearCurrent"), ("Clear Markers", "markers.clearAll")] {
-        let r = ui.button(crate::i18n::t(label));
-        elems.push((format!("{prefix}.{cmd}"), r.rect, label.into()));
-        if r.clicked() {
-            // the marker itself, wherever the playhead is
-            let res = if cmd == "markers.clearCurrent" {
-                app.session.execute("markers.remove", json!({"marker": id})).map_err(|e| e.to_string())
-            } else {
-                crate::menus::invoke(app, ctx, cmd, json!({}))
-            };
-            if let Err(e) = res {
-                app.ui.status = e;
-            }
-            ui.close();
-        }
-    }
-    for (eid, r, l) in elems {
-        app.auto.add(&eid, r, &l);
-    }
 }
 
 /// The Marker dialog, while one is open.

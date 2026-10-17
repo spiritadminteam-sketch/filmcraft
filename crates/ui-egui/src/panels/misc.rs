@@ -6,6 +6,38 @@ use filmcraft_time::{TimeDisplay, format_time};
 use crate::FilmcraftApp;
 use crate::theme::Tokens;
 
+/// A marker's Label menu. An explicit program target keeps panel focus and clip/project
+/// selections from routing colour changes to another item (#1143).
+pub(crate) fn marker_label_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, marker: &filmcraft_project::Marker, prefix: &str) {
+    let label = crate::i18n::t("Label");
+    let menu = ui.menu_button(label, |ui| {
+        for color in filmcraft_project::Label::ALL {
+            let name = crate::i18n::t(color.name());
+            let r = ui.selectable_label(color == marker.color, name);
+            app.auto.add_response(&format!("{prefix}.color.{}", color.name()), &r, name);
+            if r.clicked() {
+                if let Err(error) = app.session.execute("markers.edit", serde_json::json!({"target":"program","marker":marker.id.0,"color":color.name()})) {
+                    app.ui.status = error.to_string();
+                }
+                ui.close();
+            }
+        }
+    });
+    app.auto.add_response(&format!("{prefix}.label"), &menu.response, label);
+}
+
+/// Edit Marker…: the Marker dialog for `marker` (name, comments, colour, Delete), as a
+/// double-click on it opens.
+pub(crate) fn marker_edit_item(app: &mut FilmcraftApp, ui: &mut egui::Ui, marker: &filmcraft_project::Marker, prefix: &str) {
+    let label = crate::i18n::t("Edit Marker…");
+    let r = ui.button(label);
+    app.auto.add(&format!("{prefix}.edit"), r.rect, label);
+    if r.clicked() {
+        crate::panels::marker_edit::open_dialog(app, marker.id.0);
+        ui.close();
+    }
+}
+
 pub fn history(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(6.0)));
@@ -121,10 +153,9 @@ pub fn markers(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             if resp.double_clicked() {
                 crate::panels::marker_edit::open_dialog(app, m.id.0);
             }
-            let ctx = ui.ctx().clone();
             resp.context_menu(|ui| {
-                ui.set_min_width(200.0);
-                crate::panels::marker_edit::menu(app, &ctx, ui, m.id.0, "markers.menu");
+                marker_label_menu(app, ui, m, "markers.menu");
+                marker_edit_item(app, ui, m, "markers.menu");
             });
         }
         if seq.markers.is_empty() {

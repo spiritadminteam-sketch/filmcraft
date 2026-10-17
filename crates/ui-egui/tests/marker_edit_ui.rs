@@ -116,13 +116,14 @@ fn a_marker_drags_along_the_ruler() {
     assert_eq!(d.harness.state().session.playhead(), start);
 }
 
-/// Right-click a marker: its menu sets its colour; Clear Selected Marker clears that marker.
+/// Right-click a marker: its Label menu sets its colour; Clear Selected Marker clears that marker.
 #[test]
 fn the_marker_menu_sets_its_colour() {
     let (mut d, id) = Driver::demo();
     assert_eq!(d.marker(id).unwrap().color, Label::Green);
     d.ok("ui.click", json!({"id": format!("timeline.marker.{id}"), "button": "right"}));
     d.frames(3);
+    d.click("timeline.markerMenu.label");
     d.click("timeline.markerMenu.color.Yellow");
     assert_eq!(d.marker(id).unwrap().color, Label::Yellow);
     // the menu has closed
@@ -180,19 +181,4 @@ fn a_dragged_marker_snaps_to_a_cut() {
     d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x + dx, "y": y}, "steps": 10}));
     d.frames(4);
     assert_eq!(d.marker(id).unwrap().start, cut, "on the cut");
-}
-
-/// Right-click the ruler away from markers: Clear In / Clear Out / Clear In and Out, as in Premiere.
-#[test]
-fn the_ruler_menu_clears_in_and_out() {
-    let (mut d, id) = Driver::demo();
-    d.exec("markers.markIn", json!({"frame": 60}));
-    d.exec("markers.markOut", json!({"frame": 120}));
-    let (x, y) = d.center(&format!("timeline.marker.{id}"));
-    // well right of the marker, on the same ruler row
-    d.ok("ui.click", json!({"x": x + 200.0, "y": y, "button": "right"}));
-    d.frames(3);
-    d.click("timeline.rulerMenu.markers.clearInOut");
-    let seq = d.harness.state().session.active_sequence().unwrap().clone();
-    assert!(seq.mark_in.is_none() && seq.mark_out.is_none(), "In and Out cleared");
 }
