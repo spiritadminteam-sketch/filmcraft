@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-plugin-host"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "filmcraft-platform",
  "filmcraft-plugins",
@@ -2220,7 +2220,7 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-plugins"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "filmcraft-audio-dsp",
  "filmcraft-project",
