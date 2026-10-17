@@ -255,6 +255,8 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
             log::warn!("plug-in scan: {e}");
         }
         let mut app = FilmcraftApp::new(session);
+        // Play waits for the frame at the playhead (long-GOP seeks in OBS recordings)
+        app.playback.wait_first_frame = true;
         app.graphics_notice = notice;
         if recover == Some(false) {
             app.dialog = None;

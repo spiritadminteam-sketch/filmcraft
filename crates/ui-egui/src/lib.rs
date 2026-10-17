@@ -241,6 +241,10 @@ pub struct Playback {
     /// The Program monitor has the frame at the playhead (the clock may start without the rest
     /// of the preroll once [`frames::PREROLL_TIMEOUT_S`] passed, never before this one).
     pub preroll_first: bool,
+    /// Past [`frames::PREROLL_TIMEOUT_S`], keep waiting for the frame at the playhead (up to
+    /// [`frames::PREROLL_MAX_S`]). The desktop app turns it on; headless harnesses, whose
+    /// simulated clock runs ahead of the real decoders, keep the plain timeout.
+    pub wait_first_frame: bool,
     /// The window was hidden (occluded/minimized) since the monitor last refreshed.
     pub hidden: bool,
     /// Forward playback stops here (Play In to Out, Play from Playhead to Out Point).
@@ -1089,7 +1093,12 @@ impl FilmcraftApp {
             // under a frozen picture that jumped ahead once decoding caught up. So past the
             // timeout the frame at the playhead is still waited for, up to PREROLL_MAX_S.
             let waited = now - since;
-            if self.playback.preroll_ready || (self.playback.preroll_first && waited >= frames::PREROLL_TIMEOUT_S) || waited >= frames::PREROLL_MAX_S {
+            let timed_out = if self.playback.wait_first_frame {
+                (self.playback.preroll_first && waited >= frames::PREROLL_TIMEOUT_S) || waited >= frames::PREROLL_MAX_S
+            } else {
+                waited >= frames::PREROLL_TIMEOUT_S
+            };
+            if self.playback.preroll_ready || timed_out {
                 self.end_preroll(now);
             } else {
                 ctx.request_repaint();
