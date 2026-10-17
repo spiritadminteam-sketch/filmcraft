@@ -380,3 +380,25 @@ fn copy_paste_duplicates_a_graphic_clip() {
     assert!((pasted[0].start.seconds() - 620.0).abs() < 0.05, "at the playhead: {:?}", pasted[0].start);
     assert_eq!(texts(&s, pasted[0].id), vec!["Lyric".to_string()]);
 }
+
+/// A text graphic's clip name follows its text as it is edited (Premiere's text clips are named
+/// after their text), from the Program monitor, the Text panel or `graphics.set`; a name given by
+/// hand stays.
+#[test]
+fn a_text_graphics_name_follows_its_text() {
+    let mut s = demo("gt-name-follows");
+    let c = clip_of(&s.execute("graphics.newText", json!({"text": "Hey"})).unwrap());
+    assert_eq!(item(&s, c).name, "Hey");
+    s.execute("graphics.setText", json!({"clip": c.0, "text": "Ayo Dan..."})).unwrap();
+    assert_eq!(item(&s, c).name, "Ayo Dan...");
+    s.execute("graphics.set", json!({"clip": c.0, "props": {"text": "\n  two\nlines"}})).unwrap();
+    assert_eq!(item(&s, c).name, "two", "the first line that isn't blank");
+    s.execute("graphics.set", json!({"clip": c.0, "props": {"size": 60}})).unwrap();
+    assert_eq!(item(&s, c).name, "two", "other properties leave it alone");
+    s.execute("edit.undo", json!({})).unwrap();
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(item(&s, c).name, "Ayo Dan...", "undo brings the name back with the text");
+    s.execute("clip.rename", json!({"clip": c.0, "name": "intro caption"})).unwrap();
+    s.execute("graphics.setText", json!({"clip": c.0, "text": "something else"})).unwrap();
+    assert_eq!(item(&s, c).name, "intro caption", "a name given by hand stays");
+}

@@ -277,10 +277,37 @@ pub(crate) fn set_props(
     s.edit_sequence_as(label, merge, |q, _, _| {
         let (_, it) = q.find_item_mut(clip).ok_or(filmcraft_edit::EditError::NoItem(clip))?;
         let mt = it.source_time_at(tl.clamp(it.start, it.end() - Tick(1)));
+        // the clip's name follows its first text layer's text (Premiere names a text clip after
+        // its text): only while the name still is that text, so a clip renamed by hand keeps
+        // its name
+        let first_text = layer_indices(&it.effects).into_iter().find(|i| it.effects.get(*i).is_some_and(|e| e.effect == graphic::TEXT_LAYER));
+        let follows = first_text == Some(eidx) && props.contains_key("text");
+        let old_name = follows.then(|| it.effects.get(eidx).map(|e| clip_name_for(&text_of(e, mt)))).flatten();
         let e = it.effects.get_mut(eidx).ok_or_else(|| bad("graphics.set", "no such layer"))?;
         apply_props(e, &props, mt)?;
+        if let Some(old) = old_name
+            && (it.name == old || it.name.trim().is_empty() || it.name == "Graphic")
+        {
+            let new = it.effects.get(eidx).map(|e| clip_name_for(&text_of(e, mt))).unwrap_or_default();
+            if !new.is_empty() {
+                it.name = new;
+            }
+        }
         Ok(())
     })
+}
+
+fn text_of(e: &EffectInstance, t: Tick) -> String {
+    match e.params.get("text").map(|p| p.value_at(t)) {
+        Some(ParamValue::Text(x)) => x,
+        _ => String::new(),
+    }
+}
+
+/// The name a graphic clip gets from its text: the first line that isn't blank, as a new text
+/// graphic is named.
+pub(crate) fn clip_name_for(text: &str) -> String {
+    text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string()
 }
 
 /// Turn a text layer into point text (no box; the lines the box wrapped become real lines) or

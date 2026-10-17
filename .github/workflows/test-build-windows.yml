@@ -53,7 +53,7 @@ jobs:
           if [ $rc -ne 0 ]; then report media-lint.log "media clippy"; exit $rc; fi
           cargo test --locked -p filmcraft-media --lib -- still 2>&1 | tee media.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report media.log "media tests"; exit $rc; fi
-          cargo test --locked -p filmcraft-engine --lib -- sequence_tools marker ultra_key 2>&1 | tee engine.log; rc=${PIPESTATUS[0]}
+          cargo test --locked -p filmcraft-engine --lib -- sequence_tools marker ultra_key graphic 2>&1 | tee engine.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report engine.log "engine tests"; exit $rc; fi
           cargo test --locked -p filmcraft-ui-egui --lib -- effect_controls motion_overlay timeline i18n command_palette waveform_cache 2>&1 | tee lib.log; rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then report lib.log "lib tests"; exit $rc; fi

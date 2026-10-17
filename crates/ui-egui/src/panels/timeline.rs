@@ -1593,7 +1593,27 @@ fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rect, seq_seco
             }
         }
     }
-    if resp.drag_stopped() {
+    // the pointer says what a press does: resize at the handles, grab the thumb, jump on the track
+    let held = matches!(app.tl.drag, Some(Drag::ZoomBar { .. }));
+    if let Some(h) = resp.hover_pos().filter(|_| !held) {
+        let icon = if thumb.expand2(vec2(0.0, 4.0)).contains(h) {
+            if (h.x - thumb.min.x).abs() < 9.0 || (h.x - thumb.max.x).abs() < 9.0 { egui::CursorIcon::ResizeHorizontal } else { egui::CursorIcon::Grab }
+        } else {
+            egui::CursorIcon::PointingHand
+        };
+        ui.ctx().set_cursor_icon(icon);
+    }
+    if held && resp.dragged() {
+        ui.ctx().set_cursor_icon(match app.tl.drag {
+            Some(Drag::ZoomBar { mode: 1 | 2, .. }) => egui::CursorIcon::ResizeHorizontal,
+            _ => egui::CursorIcon::Grabbing,
+        });
+    }
+    // a drag ends when the button comes up, and also when it is no longer a drag at all: the
+    // window lost focus mid-drag (Alt+Tab, a click in another window) and never saw the release.
+    // Left behind, it kept steering the view and the scroll wheel.
+    let focused = ui.input(|i| i.focused);
+    if held && (resp.drag_stopped() || !resp.dragged() || !focused) {
         app.tl.drag = None;
     }
 }
