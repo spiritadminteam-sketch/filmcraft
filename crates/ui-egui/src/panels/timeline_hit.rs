@@ -74,16 +74,39 @@ pub fn marker_rect(layout: &Layout, start: Tick) -> Rect {
     Rect::from_center_size(pos2(layout.x_of(start), layout.ruler.min.y + 8.0), vec2(10.0, 13.0))
 }
 
-/// The start of the marker whose pentagon is under `pos` on the ruler (the topmost, i.e. last
-/// drawn, when several overlap). A press there puts the playhead on the marker, so Markers ▸ Clear
-/// Selected Marker removes it (#695).
-pub fn marker_at(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<Tick> {
-    seq.markers.iter().rev().map(|m| m.start).find(|t| marker_rect(layout, *t).contains(pos))
+/// Where a press grabs the marker at `start`: wider and taller than the 8 px pentagon drawn
+/// (it was hard to catch while editing). A chapter marker (drawn as a line through the tracks)
+/// is also grabbed anywhere on its line across the ruler.
+fn marker_grab_rect(layout: &Layout, start: Tick, chapter: bool) -> Rect {
+    let x = layout.x_of(start);
+    let bottom = if chapter { layout.ruler.max.y } else { layout.ruler.min.y + 22.0 };
+    Rect::from_min_max(pos2(x - MARKER_GRAB_PX, layout.ruler.min.y), pos2(x + MARKER_GRAB_PX, bottom))
 }
 
-/// The marker (id and start) whose pentagon is under `pos` on the ruler, as [`marker_at`].
+/// Half the width of a marker's grab area (px).
+pub const MARKER_GRAB_PX: f32 = 8.0;
+
+/// The marker under `pos` on the ruler: the nearest one when the grab areas of several overlap.
+fn marker_under(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<&filmcraft_project::Marker> {
+    if !pos.x.is_finite() || !pos.y.is_finite() {
+        return None;
+    }
+    seq.markers
+        .iter()
+        .rev()
+        .filter(|m| marker_grab_rect(layout, m.start, m.kind == filmcraft_project::MarkerKind::Chapter).contains(pos))
+        .min_by(|a, b| (layout.x_of(a.start) - pos.x).abs().total_cmp(&(layout.x_of(b.start) - pos.x).abs()))
+}
+
+/// The start of the marker under `pos` on the ruler (see [`marker_under`]). A press there puts
+/// the playhead on the marker, so Markers ▸ Clear Selected Marker removes it (#695).
+pub fn marker_at(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<Tick> {
+    marker_under(seq, layout, pos).map(|m| m.start)
+}
+
+/// The marker (id and start) under `pos` on the ruler, as [`marker_at`].
 pub fn marker_hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Option<(filmcraft_project::MarkerId, Tick)> {
-    seq.markers.iter().rev().find(|m| marker_rect(layout, m.start).contains(pos)).map(|m| (m.id, m.start))
+    marker_under(seq, layout, pos).map(|m| (m.id, m.start))
 }
 
 pub fn hit(seq: &Sequence, layout: &Layout, pos: Pos2) -> Hit {
@@ -440,6 +463,34 @@ mod tests {
         assert_eq!(marker_at(&seq, &l, pos2(310.0, 10.0)), None);
         assert_eq!(marker_at(&seq, &l, pos2(301.7, 30.0)), None);
         assert_eq!(marker_at(&seq, &l, pos2(f32::NAN, 10.0)), None);
+    }
+
+    #[test]
+    fn markers_are_easy_to_grab_and_chapters_along_their_line() {
+        let (mut seq, l, _) = fixture(clips());
+        let mk = |id: u64, s: f64, kind| filmcraft_project::Marker {
+            id: filmcraft_project::MarkerId(id),
+            start: Tick::from_seconds_f64(s),
+            duration: Tick::ZERO,
+            name: String::new(),
+            comment: String::new(),
+            kind,
+            color: Label::Red,
+        };
+        seq.markers.push(mk(1, 3.0, filmcraft_project::MarkerKind::Comment));
+        seq.markers.push(mk(2, 6.0, filmcraft_project::MarkerKind::Chapter));
+        let x = |s: f64| l.x_of(Tick::from_seconds_f64(s));
+        // 7 px off a comment marker's tip, a little below the pentagon: still that marker
+        assert_eq!(marker_hit(&seq, &l, pos2(x(3.0) + 7.0, 18.0)).map(|m| m.0.0), Some(1));
+        // ... but not down among the timecode labels
+        assert_eq!(marker_hit(&seq, &l, pos2(x(3.0), 34.0)), None);
+        // a chapter marker is grabbed anywhere on its line across the ruler
+        assert_eq!(marker_hit(&seq, &l, pos2(x(6.0) - 6.0, 34.0)).map(|m| m.0.0), Some(2));
+        assert_eq!(marker_hit(&seq, &l, pos2(x(6.0) + 12.0, 10.0)), None);
+        // two markers close together: the nearer one wins
+        seq.markers.push(mk(3, 3.05, filmcraft_project::MarkerKind::Comment));
+        assert_eq!(marker_hit(&seq, &l, pos2(x(3.0) - 2.0, 10.0)).map(|m| m.0.0), Some(1));
+        assert_eq!(marker_hit(&seq, &l, pos2(x(3.05) + 2.0, 10.0)).map(|m| m.0.0), Some(3));
     }
 
     use egui::Modifiers;
