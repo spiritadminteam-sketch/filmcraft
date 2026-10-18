@@ -203,7 +203,8 @@ fn without_the_pen_tool_there_is_no_volume_line() {
     let (mut d, pair) = Driver::demo(&[]);
     assert!(d.find(&format!("timeline.clip.{}.volume", pair.audio)).is_none());
     let (x, y) = centre(d.rect(&format!("timeline.clip.{}", pair.audio)));
-    assert_eq!(d.ok("ui.timeline.hit", json!({"x": x, "y": y}))["kind"], "clip");
+    let hit = d.ok("ui.timeline.hit", json!({"x": x, "y": y}));
+    assert_eq!((hit["hit"].clone(), hit["kind"].clone()), (json!("clip"), Value::Null), "{hit}");
     d.ok("ui.click", json!({"x": x, "y": y}));
     d.frames(3);
     assert!(d.harness.state().session.state.selection.contains(&ClipId(pair.audio)));
