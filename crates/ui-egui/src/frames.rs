@@ -524,6 +524,12 @@ impl FrameServer {
         self.request_job(key, time, scale, project, prio, false, late);
     }
 
+    /// Decode `key` ahead of the playhead getting there (the far side of a cut near a paused
+    /// playhead): a prefetch job, so the scrub's own requests do not cancel it.
+    pub fn warm(&self, key: FrameKey, time: Tick, scale: f32, project: &Arc<Project>) {
+        self.request_job(key, time, scale, project, 2, true, None);
+    }
+
     fn request_job(&self, key: FrameKey, time: Tick, scale: f32, project: &Arc<Project>, prio: u32, prefetch: bool, catch_up: Option<Tick>) {
         let hit = || self.shared.stats.lock().unwrap_or_else(|e| e.into_inner()).request_hits += 1;
         if self.shared.done.lock().unwrap_or_else(|e| e.into_inner()).map.contains_key(&key)

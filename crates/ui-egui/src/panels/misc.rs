@@ -84,9 +84,10 @@ pub fn history(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 
 /// The marker colours of the Markers panel filter (each chip stands for the labels that share its
 /// marker colour).
-pub const MARKER_FILTER: [filmcraft_project::Label; 7] = {
+pub const MARKER_FILTER: [filmcraft_project::Label; 8] = {
     use filmcraft_project::Label::*;
-    [Green, Rose, Purple, Mango, Yellow, Blue, Teal]
+    // (Lavender is the White marker)
+    [Green, Rose, Purple, Mango, Yellow, Lavender, Blue, Teal]
 };
 
 /// Markers panel: a colour filter row (click a chip to show/hide that colour; automation ids
@@ -117,8 +118,8 @@ pub fn markers(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             } else {
                 ui.painter().rect_stroke(r.shrink(2.5), 3.0, egui::Stroke::new(1.0, col), egui::StrokeKind::Inside);
             }
-            elems.push((format!("markers.filter.{}", l.name()), r, format!("{} markers {}", l.name(), if on { "shown" } else { "hidden" })));
-            if resp.on_hover_text(tlf!("Show or hide {color} markers", color = crate::i18n::t(l.name()))).clicked() {
+            elems.push((format!("markers.filter.{}", l.name()), r, format!("{} markers {}", l.marker_name(), if on { "shown" } else { "hidden" })));
+            if resp.on_hover_text(tlf!("Show or hide {color} markers", color = crate::i18n::t(l.marker_name()))).clicked() {
                 toggle = Some((l, !on));
             }
         }

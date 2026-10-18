@@ -492,6 +492,11 @@ fn range_and_chapter_markers() {
     s.execute("markers.showAllMarkerColors", json!({})).unwrap();
     assert!(s.state.hidden_marker_colors.is_empty());
     assert!(s.execute("markers.filterColors", json!({"hidden": ["Nope"]})).is_err());
+    // the White marker colour (stored as Lavender, as EDL/OTIO WHITE already is)
+    s.execute("markers.filterColors", json!({"color": "White", "visible": false})).unwrap();
+    assert_eq!(s.state.hidden_marker_colors, vec![Label::Lavender]);
+    assert_eq!((Label::Lavender.marker_name(), Label::Lavender.marker_rgb()), ("White", [0xee, 0xee, 0xee]));
+    s.execute("markers.showAllMarkerColors", json!({})).unwrap();
     s.execute("markers.clearAll", json!({})).unwrap();
     assert!(s.active_sequence().unwrap().markers.is_empty());
 }

@@ -144,7 +144,9 @@ impl Label {
     pub fn marker_rgb(self) -> [u8; 3] {
         match self {
             Label::Rose | Label::Magenta => [0xc1, 0x3c, 0x3d],
-            Label::Purple | Label::Violet | Label::Lavender => [0xa9, 0x8c, 0xaf],
+            Label::Purple | Label::Violet => [0xa9, 0x8c, 0xaf],
+            // Premiere's White marker (EDL and OTIO already map WHITE to Lavender).
+            Label::Lavender => [0xee, 0xee, 0xee],
             Label::Mango | Label::Brown | Label::Tan => [0xda, 0x76, 0x39],
             Label::Yellow => [0xc9, 0xa3, 0x44],
             Label::Blue | Label::Iris | Label::Cerulean => [0x56, 0x8b, 0xf4],
@@ -152,7 +154,14 @@ impl Label {
             _ => [0x75, 0x85, 0x42],
         }
     }
+    /// The name of this colour as a marker colour: Lavender is the White marker.
+    pub fn marker_name(self) -> &'static str {
+        if self == Label::Lavender { "White" } else { self.name() }
+    }
     pub fn from_name(s: &str) -> Option<Label> {
+        if s.eq_ignore_ascii_case("white") {
+            return Some(Label::Lavender);
+        }
         Self::ALL.iter().copied().find(|l| l.name().eq_ignore_ascii_case(s))
     }
 }

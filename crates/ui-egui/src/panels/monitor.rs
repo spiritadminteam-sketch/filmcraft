@@ -206,6 +206,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
             }
         } else {
             app.frames.request(key, rate.tick_of(frame), scale, &project, 0);
+            if which == Which::Program {
+                warm_cuts(app, key, rate, scale, &project);
+            }
         }
         let asked = asked_before(app, prefix, key, playing);
         let tex_name = if channel { format!("monitor-{prefix}-{display:?}") } else { format!("monitor-{prefix}") };
@@ -1130,6 +1133,45 @@ fn source_nav(app: &mut FilmcraftApp, cmd: &str) {
         _ => rate.tick_of(rate.frame_at(cur).saturating_add(1)),
     };
     let _ = app.session.execute("source.setPlayhead", json!({"time": t.0}));
+}
+
+/// How near (frames) the paused or scrubbed Program playhead must be to an edit for the frame on
+/// its far side to be decoded ahead.
+const CUT_WARM_FRAMES: i64 = 90;
+
+/// Paused or scrubbing near a cut: decode the frame on the far side of the nearest edit in each
+/// direction ahead of time. A jump cut lands on another part of the source, and decoding that from
+/// its keyframe took long enough that scrubbing across the cut froze for a moment; asked for here,
+/// the decoder does it while the scrub is still on the near side (as a prefetch job, which the
+/// scrub's own requests do not cancel).
+fn warm_cuts(app: &FilmcraftApp, key: FrameKey, rate: filmcraft_time::FrameRate, scale: f32, project: &std::sync::Arc<filmcraft_project::Project>) {
+    let Some(seq) = app.session.active_sequence() else { return };
+    let here = key.frame;
+    // the nearest edit each way on every track: a caption's edge near the playhead must not hide
+    // the jump cut on V1 behind it
+    let mut frames: Vec<i64> = Vec::new();
+    for track in seq.video_tracks.iter().filter(|t| t.enabled) {
+        let (mut next, mut prev): (Option<i64>, Option<i64>) = (None, None);
+        for c in &track.items {
+            for e in [rate.frame_at(c.start), rate.frame_at(c.start + c.duration)] {
+                let d = e.saturating_sub(here);
+                if d > 0 && d <= CUT_WARM_FRAMES {
+                    next = Some(next.map_or(e, |n| n.min(e)));
+                } else if d <= 0 && d > -CUT_WARM_FRAMES {
+                    prev = Some(prev.map_or(e, |p| p.max(e)));
+                }
+            }
+        }
+        let before = prev.map(|e| e.saturating_sub(1)).filter(|f| *f >= 0 && *f != here);
+        for f in next.into_iter().chain(before) {
+            if !frames.contains(&f) {
+                frames.push(f);
+            }
+        }
+    }
+    for f in frames {
+        app.frames.warm(FrameKey { frame: f, ..key }, rate.tick_of(f), scale, project);
+    }
 }
 
 #[cfg(test)]

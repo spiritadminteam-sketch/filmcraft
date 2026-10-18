@@ -22,7 +22,7 @@ fn swatch(ui: &mut egui::Ui, l: Label, on: bool) -> egui::Response {
     } else if resp.hovered() {
         ui.painter().rect_stroke(r, 3.0, egui::Stroke::new(1.0, Color32::from_gray(200)), egui::StrokeKind::Inside);
     }
-    resp.on_hover_text(crate::i18n::t(l.name()))
+    resp.on_hover_text(crate::i18n::t(l.marker_name()))
 }
 
 /// The Marker dialog's draft of marker `id` of the active sequence.
