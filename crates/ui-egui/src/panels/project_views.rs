@@ -590,7 +590,7 @@ fn empty_space(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &View, bg: &egui::R
         app.ui.project_panel.selected_bin = None;
         actions.push(("project.select".into(), json!({"items": []})));
     }
-    if empty_area_double_click(ui, &bg, "list") {
+    if empty_area_double_click(ui, bg, "list") {
         actions.push(("file.import".into(), json!({})));
     }
     let bin = (v.bin != app.session.project.root.id).then_some(v.bin.0);
