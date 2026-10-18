@@ -402,3 +402,14 @@ fn a_text_graphics_name_follows_its_text() {
     s.execute("graphics.setText", json!({"clip": c.0, "text": "something else"})).unwrap();
     assert_eq!(item(&s, c).name, "intro caption", "a name given by hand stays");
 }
+
+/// A name left behind as a piece of the text (a split, a copy, typing that began on another
+/// clip: "this" for "this situation") still follows the text, so captions keep syncing.
+#[test]
+fn a_stale_piece_of_the_text_as_name_still_follows() {
+    let mut s = demo("gt-name-piece");
+    let c = clip_of(&s.execute("graphics.newText", json!({"text": "this situation"})).unwrap());
+    s.execute("clip.rename", json!({"clip": c.0, "name": "this"})).unwrap();
+    s.execute("graphics.setText", json!({"clip": c.0, "text": "is insane"})).unwrap();
+    assert_eq!(item(&s, c).name, "is insane");
+}

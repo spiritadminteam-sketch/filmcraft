@@ -275,7 +275,7 @@ impl Grab {
 pub fn grab_at(seq: &Sequence, layout: &Layout, pos: Pos2, tool: Tool, mods: Modifiers, roll_ripple: bool) -> Grab {
     let h = hit(seq, layout, pos);
     if let Hit::Clip { track, clip, edge: None } = h
-        && matches!(tool, Tool::Selection | Tool::Pen)
+        && tool == Tool::Pen
         && super::timeline_volume::on_line(seq, layout, clip, pos)
     {
         return Grab::Volume { track, clip };

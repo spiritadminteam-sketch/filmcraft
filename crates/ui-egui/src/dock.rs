@@ -189,6 +189,35 @@ pub const WORKSPACES_FILE: &str = "workspaces.json";
 pub struct WorkspacePrefs {
     pub saved: Vec<SavedWorkspace>,
     pub current: String,
+    /// Workspaces this fork has added for its user, once each: [`ZACHASM`] is added to the
+    /// saved workspaces and made the current one the first time, and left alone afterwards (the
+    /// user may change, rename or delete it).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub seeded: Vec<String>,
+}
+
+/// The fork user's own workspace, carried over from his Premiere Pro layout: top row the
+/// Project group (Properties, Audio Clip Mixer, Effects, Text, Effect Controls, Project), the
+/// Program monitor, and Essential Sound with the Audio Track Mixer; bottom row Tools and the
+/// Timeline; the audio meters down the whole right edge.
+pub const ZACHASM: &str = "Zachasm";
+
+pub fn zachasm_layout() -> DockNode {
+    use PanelKind::*;
+    use SplitSize::*;
+    hsplit(
+        FixedB(110.0),
+        vsplit(
+            Ratio(0.47),
+            hsplit(
+                Ratio(0.41),
+                tabs(&[Properties, AudioClipMixer, Effects, Text, EffectControls, Project], 5),
+                hsplit(Ratio(0.53), tabs(&[Program], 0), tabs(&[EssentialSound, AudioTrackMixer], 1)),
+            ),
+            hsplit(FixedA(48.0), tabs(&[Tools], 0), tabs(&[Timeline], 0)),
+        ),
+        tabs(&[AudioMeters], 0),
+    )
 }
 
 /// A named layout. `layout` is a [`DockNode`] kept as JSON, so one unreadable entry (a panel a
@@ -216,6 +245,21 @@ impl WorkspacePrefs {
             return Self::default();
         };
         serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+    /// Add [`ZACHASM`] the first time (see `seeded`); true when it did. The desktop app calls
+    /// this at start (test harnesses keep the factory workspaces).
+    pub fn seed(&mut self) -> bool {
+        if self.seeded.iter().any(|s| s == ZACHASM) {
+            return false;
+        }
+        self.seeded.push(ZACHASM.to_string());
+        if let Ok(layout) = serde_json::to_value(zachasm_layout())
+            && !self.saved.iter().any(|w| w.name == ZACHASM)
+        {
+            self.saved.push(SavedWorkspace { name: ZACHASM.to_string(), layout, floating: serde_json::Value::Null });
+        }
+        self.current = ZACHASM.to_string();
+        true
     }
     pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
         if let Some(d) = path.parent() {

@@ -590,11 +590,36 @@ fn empty_space(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &View, bg: &egui::R
         app.ui.project_panel.selected_bin = None;
         actions.push(("project.select".into(), json!({"items": []})));
     }
-    if bg.double_clicked() {
+    if empty_area_double_click(ui, &bg, "list") {
         actions.push(("file.import".into(), json!({})));
     }
     let bin = (v.bin != app.session.project.root.id).then_some(v.bin.0);
     bg.context_menu(|ui| background_menu(app, ui, v, bin, actions));
+}
+
+/// A double-click on the panel's empty area, counted here as well as by egui: two clicks within
+/// half a second, a few points apart. egui's own count missed the first double-click while the
+/// panel was taking focus, so importing took a click and then a double-click.
+fn empty_area_double_click(ui: &egui::Ui, bg: &egui::Response, key: &str) -> bool {
+    if bg.double_clicked() {
+        return true;
+    }
+    if !bg.clicked() {
+        return false;
+    }
+    let id = egui::Id::new(("project-empty-click", key));
+    let now = ui.input(|i| i.time);
+    let at = bg.interact_pointer_pos();
+    let last: Option<(f64, egui::Pos2)> = ui.data(|d| d.get_temp(id));
+    let double = matches!((last, at), (Some((t, p)), Some(a)) if now - t < 0.5 && (a - p).length() < 6.0);
+    ui.data_mut(|d| {
+        if double {
+            d.remove::<(f64, egui::Pos2)>(id);
+        } else if let Some(a) = at {
+            d.insert_temp(id, (now, a));
+        }
+    });
+    double
 }
 
 fn hits_id(v: &View) -> egui::Id {
@@ -1109,7 +1134,7 @@ pub fn freeform_view(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, v: &
             app.ui.project_panel.selected_bin = None;
             actions.push(("project.select".into(), json!({"items": []})));
         }
-        if bg.double_clicked() {
+        if empty_area_double_click(ui, &bg, "canvas") {
             actions.push(("file.import".into(), json!({})));
         }
         let bin = Some(v.bin.0);

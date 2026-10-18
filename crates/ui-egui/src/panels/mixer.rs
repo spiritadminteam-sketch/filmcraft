@@ -108,6 +108,14 @@ pub fn poll_meters(app: &mut FilmcraftApp, ui: &egui::Ui) -> HashMap<u64, Vec<[f
     }
     // scrubbing plays through the same mixer, so its grains move the meters too
     let live = app.playback.playing || app.session.voiceover.recording() || app.scrub.is_open();
+    // stopped: the meters go straight to the floor (no slow fall after Stop: it is playing or not)
+    if !live {
+        for v in st.values_mut() {
+            for m in v.iter_mut() {
+                *m = [-90.0; 2];
+            }
+        }
+    }
     if live {
         for (k, p) in fresh {
             let e = st.entry(k).or_default();

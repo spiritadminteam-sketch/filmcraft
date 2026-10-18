@@ -235,7 +235,16 @@ impl Pen16<'_> {
 
 /// Paint `icon` centred in `rect`.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
-    let pen = Pen16 { painter, rect, color, width: 1.25 };
+    paint_width(painter, rect, icon, color, 1.25);
+}
+
+/// [`paint`] with heavier strokes (the Tools panel, where the glyphs must read at a glance).
+pub fn paint_bold(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
+    paint_width(painter, rect, icon, color, 1.6);
+}
+
+fn paint_width(painter: &Painter, rect: Rect, icon: Icon, color: Color32, width: f32) {
+    let pen = Pen16 { painter, rect, color, width };
     use Icon::*;
     match icon {
         Selection => pen.fill(&[(4.0, 2.0), (4.0, 13.0), (6.8, 10.4), (8.8, 14.6), (10.4, 13.9), (8.5, 9.8), (12.2, 9.6)]),
@@ -282,10 +291,10 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.fill(&[(3.5, 13.5), (5.5, 12.0), (5.5, 14.8)]);
         }
         Razor => {
-            pen.closed(&[(2.5, 5.0), (13.5, 5.0), (13.5, 11.0), (2.5, 11.0)]);
-            pen.circle(8.0, 8.0, 1.3);
-            pen.line(&[(5.0, 8.0), (6.5, 8.0)]);
-            pen.line(&[(9.5, 8.0), (11.0, 8.0)]);
+            // a utility knife: the blade's tip at the lower left (the cut point), the handle up
+            // and to the right
+            pen.fill(&[(2.0, 14.0), (5.0, 7.0), (9.5, 5.0), (10.5, 7.5)]);
+            pen.closed(&[(9.5, 5.0), (13.5, 1.5), (15.0, 3.0), (10.5, 7.5)]);
         }
         Slip => {
             pen.line(&[(2.5, 4.0), (2.5, 12.0)]);

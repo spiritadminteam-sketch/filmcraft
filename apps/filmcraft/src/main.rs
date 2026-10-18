@@ -257,6 +257,14 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
         let mut app = FilmcraftApp::new(session);
         // Play waits for the frame at the playhead (long-GOP seeks in OBS recordings)
         app.playback.wait_first_frame = true;
+        // the fork user's own workspace (his Premiere layout), added and opened once; the first
+        // frame then opens the current workspace as usual
+        let mut workspaces = app.workspaces.clone();
+        if workspaces.seed()
+            && let Err(e) = app.set_workspaces(workspaces)
+        {
+            log::warn!("{e}");
+        }
         app.graphics_notice = notice;
         if recover == Some(false) {
             app.dialog = None;

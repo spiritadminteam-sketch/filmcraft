@@ -37,6 +37,12 @@ const SNAP_PX: f32 = 9.0;
 /// Waveform peaks are kept per audio stream: (item, index into the media's `audio_streams`).
 pub type PeakKey = (ItemId, usize);
 
+/// Waveforms still being read or mixed in the background (media and nested sequences): what the
+/// header's loading indicator counts.
+pub fn waveforms_pending(app: &FilmcraftApp) -> usize {
+    app.tl.peaks_pending.lock().unwrap_or_else(|e| e.into_inner()).len()
+}
+
 /// Transient interaction state.
 #[derive(Default)]
 pub struct TlState {
@@ -510,7 +516,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             continue;
         }
         let p = painter.with_clip_rect(Rect::from_min_max(pos2(content.min.x, row.min.y), pos2(content.max.x, row.max.y)));
-        let volume_line = r.kind == TrackKind::Audio && !r.lane;
+        // an audio clip's Volume line shows (and can be dragged) only with the Pen tool: with the
+        // Selection tool it was grabbed by accident (Audio Gain, G, sets a clip's level)
+        let volume_line = r.kind == TrackKind::Audio && !r.lane && app.ui.tool == Tool::Pen;
         // the selected gap (#648, #668): a light block across the empty time, as in Premiere Pro
         if let Some(g) = app.session.state.gap_selection.filter(|g| g.track == r.track) {
             let x0 = layout.x_of(g.range.start).max(content.min.x - 1.0);
@@ -2315,6 +2323,19 @@ fn marker_menu(app: &mut FilmcraftApp, ctx: &egui::Context, ui: &mut egui::Ui, m
     }
 }
 
+/// The Razor tool's pointer: a small utility-knife blade whose tip is the cut point, drawn over
+/// everything (the system has no razor cursor, and its plus sign read as "add").
+fn paint_razor_cursor(ctx: &egui::Context, p: Pos2) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("razor-cursor")));
+    let o = |x: f32, y: f32| p + vec2(x, y);
+    let outline = Stroke::new(1.0, Color32::BLACK);
+    // handle
+    painter.add(egui::Shape::convex_polygon(vec![o(4.0, -11.0), o(12.0, -15.0), o(19.0, -26.0), o(11.0, -22.0)], Color32::from_rgb(0xe0, 0x8a, 0x2a), outline));
+    // blade: the tip at the pointer, the cutting edge along the bottom
+    painter.add(egui::Shape::convex_polygon(vec![o(0.0, 0.0), o(4.0, -11.0), o(12.0, -15.0), o(9.0, -5.0)], Color32::from_rgb(0xee, 0xee, 0xee), outline));
+    painter.line_segment([o(0.0, 0.0), o(9.0, -5.0)], Stroke::new(1.2, Color32::from_rgb(0x40, 0x40, 0x40)));
+}
+
 fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &Layout, rect: Rect) {
     let ctx = ui.ctx().clone();
     let area = Rect::from_min_max(pos2(layout.content.min.x, layout.ruler.min.y), layout.content.max);
@@ -2412,7 +2433,8 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 (Tool::Selection, Grab::Other(Hit::Transition { edge: None, .. })) => CursorIcon::Grab,
                 (_, Grab::Volume { .. }) if tool == Tool::Pen || mods.command => CursorIcon::Crosshair,
                 (_, Grab::Volume { .. }) => CursorIcon::ResizeVertical,
-                (Tool::Razor, Grab::Other(Hit::Clip { .. })) => CursorIcon::Crosshair,
+                // a razor blade drawn at the pointer (below), not the system's plus sign
+                (Tool::Razor, _) => CursorIcon::None,
                 (Tool::Slip | Tool::Slide, Grab::Other(Hit::Clip { .. })) => CursorIcon::ResizeHorizontal,
                 (Tool::Hand, _) => CursorIcon::Grab,
                 (Tool::Zoom, _) => CursorIcon::ZoomIn,
@@ -2420,6 +2442,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             }
         };
         ctx.set_cursor_icon(cur);
+        if cur == CursorIcon::None && tool == Tool::Razor {
+            paint_razor_cursor(&ctx, p);
+        }
         // the edge a press here would grab, and the trim it starts (#259)
         if let Grab::Edge { track, clip, edge, kind } = g {
             super::trim_monitor::paint_hover_bracket(ui.painter(), seq, layout, track, clip, edge, kind);
@@ -2617,9 +2642,14 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                     app.session.state.selection.clear();
                     app.session.state.edit_points.clear();
                     app.session.state.transition_selection.clear();
-                    // empty time between clips: select the gap, for Delete to close it (#648, #668)
+                    // empty time between clips: select the gap, for Delete to close it (#648, #668);
+                    // a click on the gap that is already selected lets go of it
+                    let again = match hit {
+                        Hit::Empty { track } => app.session.state.gap_selection.is_some_and(|g| g.track == track && g.range.start <= t && t < g.range.end()),
+                        _ => false,
+                    };
                     let gap = match hit {
-                        Hit::Empty { track } => app.session.execute("timeline.selectGap", json!({"track": track.0, "time": t.0})).is_ok(),
+                        Hit::Empty { track } if !again => app.session.execute("timeline.selectGap", json!({"track": track.0, "time": t.0})).is_ok(),
                         _ => false,
                     };
                     if !gap {

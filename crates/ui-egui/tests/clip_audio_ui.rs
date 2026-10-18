@@ -177,6 +177,9 @@ fn properties_show_the_audio_of_a_video_clip() {
 #[test]
 fn dragging_the_volume_line_changes_the_level() {
     let (mut d, pair) = Driver::demo(&[]);
+    // the line shows only with the Pen tool
+    d.ok("ui.set", json!({"tool": "Pen"}));
+    d.frames(3);
     let start = d.item(pair.audio).start;
     let (before, _) = d.level(pair.audio);
     d.shot("volume-line");
@@ -193,19 +196,17 @@ fn dragging_the_volume_line_changes_the_level() {
     assert_eq!(d.level(pair.audio).0, before, "the drag was one undo step");
 }
 
-/// The line belongs to the clip: a click on it selects the clip and a right-click opens the clip
-/// menu, only a drag (or the Pen tool) edits the level.
+/// With the Selection tool an audio clip shows no Volume line (it was grabbed by accident; Audio
+/// Gain sets the level): a click anywhere on the clip selects it and nothing changes the level.
 #[test]
-fn clicks_on_the_volume_line_still_reach_the_clip() {
+fn without_the_pen_tool_there_is_no_volume_line() {
     let (mut d, pair) = Driver::demo(&[]);
-    let (x, y) = centre(d.rect(&format!("timeline.clip.{}.volume", pair.audio)));
-    assert_eq!(d.ok("ui.timeline.hit", json!({"x": x, "y": y}))["kind"], "volume");
+    assert!(d.find(&format!("timeline.clip.{}.volume", pair.audio)).is_none());
+    let (x, y) = centre(d.rect(&format!("timeline.clip.{}", pair.audio)));
+    assert_eq!(d.ok("ui.timeline.hit", json!({"x": x, "y": y}))["kind"], "clip");
     d.ok("ui.click", json!({"x": x, "y": y}));
     d.frames(3);
     assert!(d.harness.state().session.state.selection.contains(&ClipId(pair.audio)));
-    d.ok("ui.click", json!({"x": x, "y": y, "button": "right"}));
-    d.frames(3);
-    d.rect("timeline.clipMenu.clip.link");
     assert!(d.level(pair.audio).1.is_empty());
 }
 
@@ -213,17 +214,17 @@ fn clicks_on_the_volume_line_still_reach_the_clip() {
 fn volume_keyframes_on_the_timeline() {
     let (mut d, pair) = Driver::demo(&[]);
     let id = format!("timeline.clip.{}.volume", pair.audio);
+    // the Pen tool shows the line and adds keyframes on it
+    d.ok("ui.set", json!({"tool": "Pen"}));
+    d.frames(3);
     let clip = d.rect(&format!("timeline.clip.{}", pair.audio));
     let (_, y) = centre(d.rect(&id));
-    // the Pen tool adds keyframes on the line
-    d.ok("ui.set", json!({"tool": "Pen"}));
     for f in [0.3, 0.7] {
         d.ok("ui.click", json!({"x": clip[0] + clip[2] * f, "y": y}));
         d.frames(3);
     }
     let (_, keys) = d.level(pair.audio);
     assert_eq!(keys.len(), 2, "{keys:?}");
-    d.ok("ui.set", json!({"tool": "Selection"}));
 
     // the line between them takes both down
     d.drag((clip[0] + clip[2] * 0.5, y), (0.0, 10.0));

@@ -131,9 +131,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ui.painter().rect_filled(r, 12.0, if resp.hovered() { t.accent_hover } else { t.accent });
         icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(14.0, 14.0)), Icon::Chat, Color32::WHITE);
         ui.painter().galley(pos2(r.min.x + 25.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
+        // what is still loading in the background (waveforms, jobs), so it is clear when a
+        // freshly opened project is ready
+        let busy_left = loading_indicator(app, ui, pos2(r.min.x - 12.0, rect.center().y));
         // Localized menus and user titles can be wider than English. Use the actual gap.
         let left = left_end + 12.0;
-        let right = r.min.x - 12.0;
+        let right = busy_left - 12.0;
         if right > left + 40.0 {
             let mut job = egui::text::LayoutJob::simple_singleline(title, Tokens::ui(14.0), t.tab_text_active);
             job.wrap.max_width = right - left;
@@ -181,4 +184,51 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             ui.ctx().data_mut(|d| d.insert_temp(popup_id, false));
         }
     }
+}
+
+/// The header's loading indicator, right-aligned at `right_mid`: a spinner and what is left
+/// (waveforms being read, background jobs) while anything loads, then "Ready" for a few seconds.
+/// Returns its left edge (`right_mid.x` when nothing shows).
+fn loading_indicator(app: &mut FilmcraftApp, ui: &egui::Ui, right_mid: egui::Pos2) -> f32 {
+    let t = app.tokens;
+    let waves = crate::panels::timeline::waveforms_pending(app);
+    let jobs = app.session.jobs.iter().filter(|j| j.to_json()["finished"] != serde_json::json!(true)).count();
+    let now = ui.input(|i| i.time);
+    let id = egui::Id::new("hdr-loading-last-busy");
+    let text = if waves + jobs > 0 {
+        ui.data_mut(|d| d.insert_temp(id, now));
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        let mut parts = Vec::new();
+        if waves > 0 {
+            parts.push(if waves == 1 { "1 waveform".to_string() } else { format!("{waves} waveforms") });
+        }
+        if jobs > 0 {
+            parts.push(if jobs == 1 { "1 job".to_string() } else { format!("{jobs} jobs") });
+        }
+        format!("Loading: {}", parts.join(", "))
+    } else {
+        match ui.data(|d| d.get_temp::<f64>(id)) {
+            Some(last) if now - last < 4.0 => {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                "Ready: everything is loaded".to_string()
+            }
+            _ => return right_mid.x,
+        }
+    };
+    let busy = waves + jobs > 0;
+    let g = ui.painter().layout_no_wrap(text.clone(), Tokens::ui(11.5), if busy { t.text } else { t.text_dim });
+    let w = g.size().x + 22.0;
+    let r = Rect::from_min_size(pos2(right_mid.x - w, right_mid.y - 10.0), vec2(w, 20.0));
+    let c = pos2(r.min.x + 8.0, r.center().y);
+    if busy {
+        // a turning arc
+        let a0 = (now * 5.0) as f32;
+        let pts: Vec<egui::Pos2> = (0..=12).map(|i| a0 + i as f32 * 0.38).map(|a| c + vec2(a.cos(), a.sin()) * 5.0).collect();
+        ui.painter().add(egui::Shape::line(pts, egui::Stroke::new(1.6, t.accent)));
+    } else {
+        ui.painter().circle_filled(c, 4.0, Color32::from_rgb(0x3c, 0xb3, 0x71));
+    }
+    ui.painter().galley(pos2(r.min.x + 18.0, r.center().y - g.size().y / 2.0), g, t.text);
+    app.auto.add("header.loading", r, &text);
+    r.min.x
 }

@@ -38,6 +38,18 @@ pub(crate) fn open_dialog(app: &mut FilmcraftApp, id: u64) {
     });
 }
 
+/// The Marker dialog's preset names, with the colour each one sets (none: the colour stays).
+pub(crate) const MARKER_PRESETS: [(&str, Option<&str>); 8] = [
+    ("bad word", Some("Rose")),
+    ("replace", None),
+    ("add SFX", None),
+    ("add GIF", None),
+    ("add image", None),
+    ("add visual", None),
+    ("add caption", None),
+    ("cut", None),
+];
+
 /// The Marker dialog, while one is open.
 pub fn dialog(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.marker_dialog.clone() else { return };
@@ -60,6 +72,24 @@ pub fn dialog(app: &mut FilmcraftApp, ctx: &egui::Context) {
                 ui.label(tl!("Name"));
                 let r = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(240.0));
                 elems.push(("markerDialog.name".into(), r.rect, "Name".into()));
+                ui.end_row();
+                // one-click names for the markers an editor drops while reviewing (a bad word to
+                // bleep is red, as the editor colour-codes them)
+                ui.label(crate::i18n::t("Presets"));
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                    for (i, (name, color)) in MARKER_PRESETS.iter().enumerate() {
+                        let on = d.name == *name;
+                        let r = ui.add(egui::Button::new(egui::RichText::new(*name).size(11.5)).selected(on).corner_radius(9.0));
+                        elems.push((format!("markerDialog.preset.{i}"), r.rect, (*name).to_string()));
+                        if r.clicked() {
+                            d.name = (*name).to_string();
+                            if let Some(c) = color {
+                                d.color = (*c).to_string();
+                            }
+                        }
+                    }
+                });
                 ui.end_row();
                 ui.label(tl!("Duration"));
                 let r = ui.add(egui::DragValue::new(&mut d.duration_frames).range(0..=10_000_000).suffix(" f"));

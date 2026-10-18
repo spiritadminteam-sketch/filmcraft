@@ -39,7 +39,13 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         } else if resp.hovered() {
             ui.painter().rect_filled(r, 4.0, t.hover);
         }
-        icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(17.0, 17.0)), current.icon(), if active { egui::Color32::WHITE } else { t.icon });
+        // (larger than the panel icons, and bright: the tool glyphs were hard to read at 17 points)
+        icons::paint_bold(
+            ui.painter(),
+            Rect::from_center_size(r.center(), vec2(21.0, 21.0)),
+            current.icon(),
+            if active { egui::Color32::WHITE } else { t.text },
+        );
         if resp.has_focus() {
             ui.painter().rect_stroke(r.shrink(2.0), 4.0, egui::Stroke::new(1.5, t.focus), egui::StrokeKind::Inside);
         }

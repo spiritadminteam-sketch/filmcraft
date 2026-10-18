@@ -285,8 +285,10 @@ pub(crate) fn set_props(
         let old_name = follows.then(|| it.effects.get(eidx).map(|e| clip_name_for(&text_of(e, mt)))).flatten();
         let e = it.effects.get_mut(eidx).ok_or_else(|| bad("graphics.set", "no such layer"))?;
         apply_props(e, &props, mt)?;
+        // (also while the name is a piece of the old text: a name left behind by a split or a
+        // copy, or by typing that began on another clip, would otherwise stop following for good)
         if let Some(old) = old_name
-            && (it.name == old || it.name.trim().is_empty() || it.name == "Graphic")
+            && (it.name == old || it.name.trim().is_empty() || it.name == "Graphic" || old.to_lowercase().contains(&it.name.trim().to_lowercase()))
         {
             let new = it.effects.get(eidx).map(|e| clip_name_for(&text_of(e, mt))).unwrap_or_default();
             if !new.is_empty() {

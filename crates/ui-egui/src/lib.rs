@@ -1581,6 +1581,11 @@ impl FilmcraftApp {
             if self.ui.focused == PanelKind::Project && id == "edit.deselectAll" {
                 id = "project.deselectAll".into();
             }
+            // Clear (Edit ▸ Clear, whatever key it is on) with the Project panel focused removes the
+            // selected items, as Delete / Backspace there do
+            if self.ui.focused == PanelKind::Project && id == "edit.clear" {
+                id = "project.delete".into();
+            }
             // Clear in the Project panel removes the selected bin when no item is selected (#587).
             let clear = if self.ui.focused == PanelKind::Project && id == "project.delete" {
                 self.ui.project_panel.rename = None;
