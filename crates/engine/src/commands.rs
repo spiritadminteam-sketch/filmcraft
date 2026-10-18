@@ -1936,6 +1936,14 @@ fn build() -> Vec<CommandSpec> {
                 }
                 Ok(())
             })?;
+            // Premiere: after Unlink only the clip that was clicked stays selected, ready to work on alone
+            if linked
+                && p.get("clips").is_none()
+                && let Some(c) = s.state.selection_primary
+                && sel.contains(&c)
+            {
+                s.state.selection = vec![c];
+            }
             Ok(json!({"linked": !linked}))
         }),
         cmd!("clip.group", "Group", ["Clip"], Some("Cmd+G"), "{}", has_selection, |s, _| {
@@ -2616,6 +2624,8 @@ fn build() -> Vec<CommandSpec> {
             }
             let clips: Vec<ClipId> =
                 p.get("clips").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_u64().map(ClipId)).collect()).unwrap_or_default();
+            // the clip that was clicked (one id asked for), which Unlink leaves selected
+            s.state.selection_primary = if clips.len() == 1 { clips.first().copied() } else { None };
             let clips = if bool_p(p, "linked").unwrap_or(true) { with_links(s, &clips) } else { clips };
             // selecting clips leaves trim mode (Premiere: clip and edit point selections are exclusive)
             s.state.edit_points.clear();

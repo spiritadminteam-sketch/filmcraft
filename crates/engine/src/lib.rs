@@ -354,6 +354,10 @@ pub struct EditorState {
     /// Marker colours hidden in the Markers panel (Show All Marker Colors clears this).
     #[serde(default)]
     pub hidden_marker_colors: Vec<filmcraft_project::Label>,
+    /// The clip the last single-clip `timeline.select` asked for (before its links were added):
+    /// Unlink leaves only it selected.
+    #[serde(skip)]
+    pub selection_primary: Option<ClipId>,
     /// Sequence markers copied with the clipboard clips (start relative to the copied range).
     #[serde(skip)]
     pub clipboard_markers: Vec<filmcraft_project::Marker>,

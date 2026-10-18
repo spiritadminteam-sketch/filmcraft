@@ -80,6 +80,16 @@ pub fn hot_number(ui: &mut Ui, id: egui::Id, value: f64, speed: f64, range: (f64
     (resp, out)
 }
 
+/// Put a [`hot_number`] in edit mode with its whole value selected, as a click on it would
+/// (dialogs that open on a value, like Audio Gain).
+pub fn start_hot_number_edit(ctx: &egui::Context, id: egui::Id, value: f64, decimals: usize) {
+    ctx.data_mut(|d| {
+        d.insert_temp(id.with("editing"), format!("{value:.decimals$}"));
+        d.insert_temp(id.with("select-all"), true);
+    });
+    ctx.request_repaint();
+}
+
 /// A large blue timecode readout (monitors/timeline) that moves its playhead: drag horizontally to
 /// scrub (1 frame per point, Shift ×10), click to type a time (Enter or clicking away commits,
 /// Escape cancels). Returns the time to go to (never before `min`), or why a typed time is invalid.

@@ -150,3 +150,15 @@ fn speed_with_ripple_on_a_split_edit() {
     assert_eq!((range(&s, picture2), range(&s, sound2)), ((f48, f144), (f48, f168)), "picture 48 to 96 frames, sound 60 to 120");
     assert_eq!((range(&s, picture3).0, range(&s, sound3).0), (f156, f168), "the next sound still starts 12 after its picture");
 }
+
+/// Premiere: clicking a linked clip selects its sound too; Unlink then leaves only the clicked
+/// clip selected, so it can be worked on alone without clicking away first.
+#[test]
+fn unlink_leaves_only_the_clicked_clip_selected() {
+    let mut s = Session::default();
+    let [(picture1, sound1), _, _] = three_clips(&mut s);
+    s.execute("timeline.select", json!({"clips": [sound1.0]})).unwrap();
+    assert!(s.state.selection.contains(&picture1) && s.state.selection.contains(&sound1), "the click selects the linked pair");
+    assert_eq!(s.execute("clip.link", json!({})).unwrap()["linked"], false);
+    assert_eq!(s.state.selection, vec![sound1], "only the clicked sound stays selected");
+}

@@ -1488,7 +1488,8 @@ impl FilmcraftApp {
         // `egui_wants_keyboard_input` above is not enough: it is read before this pass lays the UI
         // out, so it still reports the previous pass, and it is true for any focused widget, which
         // would leave the editor without its single-key tool shortcuts while a slider has focus.
-        let text_focused = ctx.text_edit_focused();
+        // typing on a caption in the Program Monitor is a text field too
+        let text_focused = ctx.text_edit_focused() || self.ui.gfx_edit.is_some();
         // Esc cancels a dynamic trim in progress
         if self.session.trim_play.dynamic.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             let _ = self.session.execute("trim.cancelDynamic", json!({}));
@@ -1536,7 +1537,7 @@ impl FilmcraftApp {
                 // method composing in it), not to a tool shortcut: `J`, `Z`, `R`, `A`… are the keys
                 // Vietnamese Telex combines into diacritics (#243). Chords with a modifier stay:
                 // Ctrl+S and friends are not something a text field or an IME consumes.
-                if lets_text_field_keep(*m, text_focused) {
+                if lets_text_field_keep(*m, *k, text_focused) {
                     continue;
                 }
                 // The focused divider consumes the arrows itself (egui matches them with any Shift/Alt).
@@ -2708,8 +2709,14 @@ mod audio_recovery_tests {
 /// letters (Vietnamese Telex builds `á` from `a` + `s`, `ả` from `a` + `r`, `ạ` from `a` + `j`),
 /// and our single-key tool shortcuts would swallow them before the field sees them (#243). Chords
 /// with a modifier are not what a text field or an IME consumes, so they keep working.
-fn lets_text_field_keep(modifiers: egui::Modifiers, text_focused: bool) -> bool {
-    text_focused && menus::specificity(modifiers) == 0
+fn lets_text_field_keep(modifiers: egui::Modifiers, key: egui::Key, text_focused: bool) -> bool {
+    if !text_focused {
+        return false;
+    }
+    // Shift with a letter or digit types a capital or a symbol: Shift+S (Toggle Audio During
+    // Scrubbing) used to fire for every capital S typed into a caption, turning scrubbing off
+    let types_text = key.name().chars().count() == 1;
+    menus::specificity(modifiers) == 0 || (modifiers.shift_only() && types_text)
 }
 
 #[cfg(test)]
@@ -2723,21 +2730,30 @@ mod text_focus_shortcut_tests {
     /// keys must reach the field, or no diacritic can ever be typed (#243).
     #[test]
     fn an_unmodified_key_reaches_a_focused_text_field() {
-        assert!(lets_text_field_keep(Modifiers::NONE, true), "the IME needs the plain letter keys");
+        assert!(lets_text_field_keep(Modifiers::NONE, Key::A, true), "the IME needs the plain letter keys");
     }
 
     /// Without a text field the editor keeps its single-key tool shortcuts.
     #[test]
     fn an_unmodified_key_still_fires_without_a_text_field() {
-        assert!(!lets_text_field_keep(Modifiers::NONE, false));
+        assert!(!lets_text_field_keep(Modifiers::NONE, Key::A, false));
     }
 
     /// A modifier chord is not what a text field or an IME consumes, so it keeps firing either way.
     #[test]
     fn a_modified_chord_still_fires_while_text_is_focused() {
-        for m in [Modifiers::COMMAND, Modifiers::CTRL, Modifiers::SHIFT, Modifiers::ALT, Modifiers::COMMAND | Modifiers::SHIFT] {
-            assert!(!lets_text_field_keep(m, true), "{m:?} is not an IME key");
+        for m in [Modifiers::COMMAND, Modifiers::CTRL, Modifiers::ALT, Modifiers::COMMAND | Modifiers::SHIFT] {
+            assert!(!lets_text_field_keep(m, Key::S, true), "{m:?} is not an IME key");
         }
+        // Shift with a non-text key (Shift+Delete, Shift+Up) still fires
+        assert!(!lets_text_field_keep(Modifiers::SHIFT, Key::Delete, true));
+    }
+
+    /// Shift+S toggles audio during scrubbing; typing a capital S into a caption must not.
+    #[test]
+    fn shift_with_a_letter_types_into_a_focused_field() {
+        assert!(lets_text_field_keep(Modifiers::SHIFT, Key::S, true), "Shift+S is a capital S while typing");
+        assert!(!lets_text_field_keep(Modifiers::SHIFT, Key::S, false), "Shift+S still toggles scrubbing elsewhere");
     }
 
     /// The keys a Vietnamese Telex IME needs must be exactly the ones we now hand to the field.
@@ -2745,13 +2761,13 @@ mod text_focus_shortcut_tests {
     fn the_telex_trigger_keys_are_left_to_the_field() {
         // s=acute, f=grave, r=hook above, x=tilde, j=dot below, w=horn, z=remove diacritic
         for key in [Key::S, Key::F, Key::R, Key::X, Key::J, Key::W, Key::Z] {
-            assert!(lets_text_field_keep(Modifiers::NONE, true), "{key:?} must reach the IME");
+            assert!(lets_text_field_keep(Modifiers::NONE, key, true), "{key:?} must reach the IME");
         }
         // The letters the editor binds as tools are the ones Telex composes with, so they must be
         // left to the field too: `A` (Track Select Forward), `R` (Rate Stretch), `J` (Shuttle Left),
         // `Z` (Zoom), `C` (Razor), `T` (Type).
         for key in [Key::A, Key::R, Key::J, Key::Z, Key::C, Key::T] {
-            assert!(lets_text_field_keep(Modifiers::NONE, true), "{key:?} is a Telex key the tools stole");
+            assert!(lets_text_field_keep(Modifiers::NONE, key, true), "{key:?} is a Telex key the tools stole");
         }
     }
 }

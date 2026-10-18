@@ -353,10 +353,31 @@ fn audio_gain_dialog_field_takes_a_calculation() {
     d.ok("ui.key", json!({"key": "Cmd+A"}));
     d.ok("ui.type", json!({"text": "1.5*2"}));
     d.frames(2);
+    // Enter commits the field and applies the dialog
     d.ok("ui.key", json!({"key": "Enter"}));
     d.frames(2);
-    d.click("audioGain.ok");
+    assert!(d.ids("audioGain.").is_empty(), "Enter applied and closed the dialog");
     assert!((peak(&mut d) - (before + 3.0)).abs() < 0.05, "3 dB louder: {before} -> {}", peak(&mut d));
+}
+
+/// As in Premiere: G opens Audio Gain with the value selected, so typing -5 and Enter turns the
+/// selection down 5 dB without touching the mouse.
+#[test]
+fn audio_gain_opens_ready_to_type_and_enter_applies() {
+    let mut d = Driver::demo();
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = seq["audio"][0]["items"][0]["clip"].as_u64().unwrap();
+    d.exec("timeline.select", json!({"clips": [clip]}));
+    let peak = |d: &mut Driver| d.exec("clip.audioPeak", json!({"clips": [clip]}))["peakDb"].as_f64().unwrap();
+    let before = peak(&mut d);
+    d.ok("ui.menu.invoke", json!({"id": "clip.audioGain"}));
+    d.frames(3);
+    d.ok("ui.type", json!({"text": "-5"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(2);
+    assert!(d.ids("audioGain.").is_empty(), "Enter applied and closed the dialog");
+    assert!((peak(&mut d) - (before - 5.0)).abs() < 0.05, "5 dB quieter: {before} -> {}", peak(&mut d));
 }
 
 #[test]

@@ -109,6 +109,15 @@ fn audio_gain(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     };
     let mut draft = app.ui.audio_gain.clone();
     crate::widgets::revert_drag_on_escape(ctx, egui::Id::new("audio-gain-before-drag"), &mut draft);
+    // the first frame of this opening of the dialog: put the chosen mode's value in edit mode
+    let opened_id = egui::Id::new("audio-gain-opened");
+    let open_focus = !ctx.data(|d| d.get_temp::<bool>(opened_id).unwrap_or(false));
+    if open_focus {
+        ctx.data_mut(|d| d.insert_temp(opened_id, true));
+    }
+    if draft.mode.is_empty() {
+        draft.mode = "adjust".into();
+    }
     let mut keep = true;
     let mut apply = false;
     let mut elems: Vec<(String, egui::Rect, String)> = Vec::new();
@@ -133,7 +142,20 @@ fn audio_gain(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
                     if r.clicked() {
                         draft.mode = id.to_string();
                     }
-                    let f = ui.add_enabled(draft.mode == id, crate::widgets::number_drag(v).speed(0.1).range(-96.0..=96.0).suffix(" dB"));
+                    // Premiere: the dialog opens with the chosen mode's value selected, so G, a
+                    // number and Enter apply it without touching the mouse
+                    let fid = egui::Id::new(("audio-gain-field", id));
+                    if open_focus && draft.mode == id {
+                        crate::widgets::start_hot_number_edit(ui.ctx(), fid, *v, 1);
+                    }
+                    let (f, out) = crate::widgets::hot_number(ui, fid, *v, 0.1, (-96.0, 96.0), 1, " dB", &app.tokens);
+                    if let Some(nv) = out {
+                        *v = nv;
+                        draft.mode = id.to_string();
+                    }
+                    if f.clicked() {
+                        draft.mode = id.to_string();
+                    }
                     elems.push((format!("audioGain.{id}.value"), f.rect, format!("{v:.1} dB")));
                     ui.end_row();
                 }
@@ -162,6 +184,10 @@ fn audio_gain(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     if crate::widgets::escape_closes(ctx) {
         keep = false;
     }
+    // Enter applies (a typed value commits in the same frame, as the field loses focus)
+    if keep && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+        apply = true;
+    }
     if apply {
         let db = match draft.mode.as_str() {
             "set" => draft.set_db,
@@ -175,6 +201,9 @@ fn audio_gain(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
         keep = false;
     }
     app.ui.audio_gain = draft;
+    if !keep {
+        ctx.data_mut(|d| d.remove::<bool>(opened_id));
+    }
     keep
 }
 
