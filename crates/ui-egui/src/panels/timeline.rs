@@ -749,7 +749,10 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 
     // ---- interaction
     interact(app, ui, seq, &layout, rect);
-    super::timeline_volume::interact(app, ui, seq, &layout, aclip);
+    // (the Volume line and its keyframes are the Pen tool's only)
+    if app.ui.tool == Tool::Pen {
+        super::timeline_volume::interact(app, ui, seq, &layout, aclip);
+    }
     // track keyframes (drawn and edited on top of the clips)
     super::timeline_automation::show(app, ui, seq, &layout, aclip);
     if cap_n > 0 {
