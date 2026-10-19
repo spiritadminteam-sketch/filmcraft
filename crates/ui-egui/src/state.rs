@@ -616,6 +616,12 @@ pub struct UiState {
     /// What the Command Palette ran last, newest first (they rank first next time).
     #[serde(default)]
     pub palette_recent: Vec<String>,
+    /// The Odin Pro window, while open (Window ▸ Odin Pro…).
+    #[serde(skip)]
+    pub odin: Option<crate::panels::odin::OdinState>,
+    /// The last scan of the Odin Pro pack (`odin.scan`), for the window and the Command Palette.
+    #[serde(skip)]
+    pub odin_catalog: Option<serde_json::Value>,
     /// Open Window ▸ Workspaces dialog.
     #[serde(default)]
     pub workspace_dialog: Option<WorkspaceDialog>,
@@ -1072,6 +1078,8 @@ impl Default for UiState {
             marker_dialog: None,
             palette: None,
             palette_recent: Vec::new(),
+            odin: None,
+            odin_catalog: None,
             workspace_dialog: None,
             clip_dialog: None,
             extras: Default::default(),

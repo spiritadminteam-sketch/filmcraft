@@ -5,6 +5,7 @@ pub mod audio_fx_editor;
 pub mod clip_dialogs;
 pub mod color_dialogs;
 pub mod command_palette;
+pub mod odin;
 pub mod dialogs;
 pub mod effect_controls;
 pub mod effects;

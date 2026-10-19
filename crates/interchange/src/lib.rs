@@ -33,6 +33,7 @@ pub mod fcp7;
 pub mod fcpxml;
 pub mod omf;
 pub mod otio;
+pub mod prproj;
 
 mod common;
 mod comp;

@@ -211,6 +211,7 @@ pub(crate) fn apply_layout(v: &mut Vec<CommandSpec>) {
     let mut pool = commands();
     pool.extend(crate::sequence_extras::commands());
     pool.extend(crate::scene_detect::commands());
+    pool.extend(crate::odin::commands());
     // Apply Default Transitions to Selection works on selected clips too (⇧D), not only on
     // selected edit points; the Trim Monitor button keeps using the same id.
     if let Some(c) = v.iter_mut().find(|c| c.id == "trim.applyDefaultTransition")

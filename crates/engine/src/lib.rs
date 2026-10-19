@@ -33,6 +33,7 @@ pub mod media_watch;
 pub mod mixer;
 pub mod multicam;
 pub mod narration;
+pub mod odin;
 pub mod panels;
 pub mod paste_media;
 pub mod perf;
@@ -1266,6 +1267,8 @@ mod mixer_tests;
 mod multicam_tests;
 #[cfg(test)]
 mod narration_tests;
+#[cfg(test)]
+mod odin_tests;
 #[cfg(test)]
 mod nest_editing_tests;
 #[cfg(test)]

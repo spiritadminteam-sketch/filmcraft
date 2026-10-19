@@ -65,6 +65,7 @@ pub const COMMANDS: &[UiCommand] = &[
     uic!("window.toggleMonitorFocus", "Toggle Source/Program Monitor Focus", [], None),
     uic!("window.openSearch", "Open Search", [], Some("Cmd+Shift+F")),
     uic!("window.commandPalette", "Command Palette…", ["Window"], None),
+    uic!("window.odinPro", "Odin Pro…", ["Window"], None),
     uic!("panel.selectFindBox", "Select Find Box", [], Some("Shift+F")),
     uic!("window.workspace.learning", "Learning", ["Window", "Workspaces"], Some("Alt+Shift+7")),
     uic!("window.workspace.review", "Review", ["Window", "Workspaces"], Some("Alt+Shift+8")),
@@ -168,6 +169,10 @@ pub fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Val
             Ok(focus_find_box(app, ctx))
         }
         "panel.selectFindBox" => Ok(focus_find_box(app, ctx)),
+        "window.odinPro" => {
+            crate::panels::odin::toggle(app);
+            Ok(json!({"open": app.ui.odin.is_some()}))
+        }
         "window.commandPalette" => {
             crate::panels::command_palette::toggle(app);
             Ok(json!({"open": app.ui.palette.is_some()}))

@@ -682,7 +682,7 @@ fn detect_image_sequence(s: &Session, path: &str) -> bool {
     filmcraft_media::sequence::Numbered::parse(path).is_some() && crate::media_pool::image_sequence_frames(path, &*s.services).is_ok_and(|f| f.len() > 1)
 }
 
-fn import_source(
+pub(crate) fn import_source(
     s: &mut Session,
     path: &str,
     name: String,

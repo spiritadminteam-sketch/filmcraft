@@ -4,6 +4,8 @@
 //! - an effect ("Effect: Gaussian Blur"), applied to every selected clip in one undo step;
 //! - a transition ("Transition: Constant Gain"), applied at both ends of every selected clip of
 //!   its kind (video or audio) in one undo step, or at the playhead's cut with nothing selected;
+//! - an Odin Pro preset or sound ("Odin: Zoom IN CW", "SFX: Whoosh 3") from the scanned pack
+//!   (Window ▸ Odin Pro…), dropped at the playhead;
 //! - a text fill colour ("Fill: Yellow"), set on every selected graphic in one undo step;
 //! - a speaker marker at the playhead ("Marker: Random");
 //! - values, typed: `+5` / `-12` move the playhead by frames (`1.` one second, `2..` two
@@ -47,6 +49,8 @@ pub enum Action {
     Effect(String),
     /// A transition: (effect id, true for video).
     Transition(String, bool),
+    /// An Odin Pro preset or sound: (command, its params as JSON).
+    Odin(&'static str, String),
     Fill(&'static str),
     /// Move the playhead by this many frames.
     Step(i64),
@@ -65,6 +69,7 @@ impl Action {
             Action::Command(id) => format!("cmd:{id}"),
             Action::Effect(id) => format!("fx:{id}"),
             Action::Transition(id, _) => format!("tr:{id}"),
+            Action::Odin(_, params) => format!("odin:{params}"),
             Action::Fill(hex) => format!("fill:{hex}"),
             Action::Step(n) => format!("step:{n}"),
             Action::Set(e, p, v) => format!("set:{e}.{p}={v}"),
@@ -148,6 +153,19 @@ pub fn entries(app: &FilmcraftApp) -> Vec<Entry> {
         }
         let kind = if e.kind == EffectKind::Video { "Video Effect" } else { "Audio Effect" };
         out.push(Entry { label: format!("Effect: {}", e.name), detail: kind.into(), shortcut: None, action: Action::Effect(e.id.to_string()) });
+    }
+    if let Some(cat) = &app.ui.odin_catalog {
+        use crate::panels::odin::{Tab, rows};
+        for (tab, prefix) in [(Tab::Presets, "Odin"), (Tab::Sounds, "SFX")] {
+            for r in rows(cat, tab) {
+                out.push(Entry {
+                    label: format!("{prefix}: {}", r.label),
+                    detail: r.group,
+                    shortcut: None,
+                    action: Action::Odin(r.command, r.params.to_string()),
+                });
+            }
+        }
     }
     for (name, hex) in FILLS {
         out.push(Entry { label: format!("Fill: {name}"), detail: format!("Text colour {hex}"), shortcut: None, action: Action::Fill(hex) });
@@ -340,6 +358,10 @@ pub fn run(app: &mut FilmcraftApp, ctx: &egui::Context, a: &Action) -> Result<()
             let cmd = if *video { "sequence.applyVideoTransition" } else { "sequence.applyAudioTransition" };
             app.session.execute(cmd, json!({"effect": id})).map(|_| ()).map_err(|e| e.to_string())
         }
+        Action::Odin(cmd, params) => {
+            let params: Value = serde_json::from_str(params).unwrap_or(Value::Null);
+            app.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string())
+        }
         Action::Step(n) => app.session.execute("playhead.step", json!({"frames": n})).map(|_| ()).map_err(|e| e.to_string()),
         Action::Set(effect, param, v) => {
             let clips: Vec<u64> = app.session.state.selection.iter().map(|c| c.0).collect();
@@ -383,6 +405,11 @@ pub fn toggle(app: &mut FilmcraftApp) {
         Some(_) => None,
         None => Some(PaletteState { focus: true, ..Default::default() }),
     };
+    // the Odin Pro pack's presets and sounds are listed once it has been read
+    let root = app.session.prefs.media_browser.odin_root.clone();
+    if app.ui.palette.is_some() && app.ui.odin_catalog.is_none() && !root.is_empty() {
+        crate::panels::odin::scan(app, &root);
+    }
 }
 
 /// The palette window, while open.

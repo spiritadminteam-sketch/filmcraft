@@ -96,6 +96,8 @@ pub struct MediaBrowserPrefs {
     pub import_as_image_sequence: bool,
     pub hover_scrub: bool,
     pub thumbnail_size: f32,
+    /// The Odin Pro (Premiere preset pack) folder the Odin Pro window lists (`odin.scan`).
+    pub odin_root: String,
 }
 
 impl Default for MediaBrowserPrefs {
@@ -110,6 +112,7 @@ impl Default for MediaBrowserPrefs {
             import_as_image_sequence: false,
             hover_scrub: true,
             thumbnail_size: 120.0,
+            odin_root: String::new(),
         }
     }
 }
