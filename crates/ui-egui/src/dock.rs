@@ -539,8 +539,6 @@ pub enum DockAction {
     Focus(PanelKind),
     Close(PanelKind),
     PanelMenu(PanelKind, egui::Pos2),
-    /// A panel tab was double-clicked: maximize the frame, or restore it (as in Premiere).
-    Maximize(PanelKind),
     /// A sequence tab of the Timeline panel was clicked / closed (project item id).
     OpenSequence(u64),
     CloseSequence(u64),
@@ -837,9 +835,6 @@ pub fn draw_group_chrome_details(ui: &mut egui::Ui, g: &Group, seqs: &SeqTabs, t
             if (resp.clicked() || resp.drag_started()) && !closed {
                 activate(tab, &mut actions);
                 actions.push(DockAction::Focus(*p));
-            }
-            if resp.double_clicked() && !closed {
-                actions.push(DockAction::Maximize(*p));
             }
             // a right-click shows the tab and opens its panel menu (as in Premiere)
             if resp.secondary_clicked() {
