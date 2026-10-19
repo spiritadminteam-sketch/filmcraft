@@ -115,8 +115,11 @@ fn a_preset_lands_on_the_playhead_above_the_footage_in_one_undo_step() {
         .find_map(|(k, t)| t.items.iter().find(|i| matches!(s.project.item(i.item).map(|x| &x.kind), Some(ItemKind::AdjustmentLayer { .. }))).map(|i| (i, k)))
         .expect("an adjustment layer clip");
     let marker = Tick(76_204_800_000);
-    assert_eq!(adj.start, at - marker + Tick(50_803_200_000));
-    assert_eq!(adj.duration, Tick(50_803_200_000));
+    // (placed on the sequence's frame grid)
+    let frame = s.sequence_rate().frame_duration();
+    let near = |a: Tick, b: Tick| (a - b).abs() <= frame;
+    assert!(near(adj.start, at - marker + Tick(50_803_200_000)), "{:?}", adj.start);
+    assert!(near(adj.duration, Tick(50_803_200_000)), "{:?}", adj.duration);
     let below_has_footage = q.video_tracks[..track].iter().any(|t| t.items.iter().any(|i| i.start < adj.end() && adj.start < i.end()));
     assert!(below_has_footage, "it sits above the footage it changes");
     let t = adj.effect("transform").expect("Transform");
@@ -128,7 +131,7 @@ fn a_preset_lands_on_the_playhead_above_the_footage_in_one_undo_step() {
     let (sfx_track, sfx) =
         q.audio_tracks.iter().enumerate().find_map(|(k, t)| t.items.iter().find(|i| i.name == "whoosh.wav").map(|i| (k, i))).expect("the sound");
     assert!(sfx_track >= 1);
-    assert_eq!(sfx.start, at - marker + Tick(8_467_200_000));
+    assert!(near(sfx.start, at - marker + Tick(8_467_200_000)), "{:?}", sfx.start);
     assert!(q.video_tracks.len() >= v0 && q.audio_tracks.len() >= a0);
     // undo takes all of it away
     s.undo();
