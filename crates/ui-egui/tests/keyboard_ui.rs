@@ -321,7 +321,7 @@ fn double_clicking_a_panel_tab_maximizes_it() {
     let tab = format!("panel.tab.{}", filmcraft_ui_egui::dock::PanelKind::Program.id());
     d.ok("ui.click", json!({"id": tab, "count": 2}));
     d.frames(3);
-    assert_eq!(d.app().ui.keys.maximized, Some(filmcraft_ui_egui::dock::PanelKind::Program));
+    assert_eq!(d.app().ui.keys.maximized, Some(filmcraft_ui_egui::dock::PanelKind::Program), "focused {:?}", d.app().ui.focused);
     d.ok("ui.click", json!({"id": tab, "count": 2}));
     d.frames(3);
     assert_eq!(d.app().ui.keys.maximized, None);

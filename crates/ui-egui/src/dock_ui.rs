@@ -269,7 +269,14 @@ impl FilmcraftApp {
                     }
                 }
                 DockAction::Maximize(panel) => {
-                    let _ = panels::keyboard::toggle_maximize(self, panel);
+                    // once per frame: egui can run a frame twice (a discarded pass) with the same
+                    // double-click, which would maximize and restore at once
+                    let frame = ctx.cumulative_frame_nr();
+                    let key = egui::Id::new("tab-maximize-frame");
+                    if ctx.data(|d| d.get_temp::<u64>(key)) != Some(frame) {
+                        ctx.data_mut(|d| d.insert_temp(key, frame));
+                        let _ = panels::keyboard::toggle_maximize(self, panel);
+                    }
                 }
                 DockAction::PanelMenu(panel, pos) => {
                     let frame = ctx.cumulative_frame_nr();
