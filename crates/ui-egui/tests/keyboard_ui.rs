@@ -312,3 +312,17 @@ fn shift_alt_click_toggles_only_the_clicked_linked_side() {
         assert_eq!(*d.app().session.project, *before, "selection does not edit the document");
     }
 }
+
+/// Double-clicking a panel's tab maximizes its frame; double-clicking it again restores the layout
+/// (as in Premiere).
+#[test]
+fn double_clicking_a_panel_tab_maximizes_it() {
+    let mut d = Driver::new();
+    let tab = format!("panel.tab.{}", filmcraft_ui_egui::dock::PanelKind::Program.id());
+    d.ok("ui.click", json!({"id": tab, "count": 2}));
+    d.frames(3);
+    assert_eq!(d.app().ui.keys.maximized, Some(filmcraft_ui_egui::dock::PanelKind::Program));
+    d.ok("ui.click", json!({"id": tab, "count": 2}));
+    d.frames(3);
+    assert_eq!(d.app().ui.keys.maximized, None);
+}

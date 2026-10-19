@@ -6,6 +6,9 @@
 //! the new position. One output stream stays open for the whole scrub: each move only re-aims it,
 //! so the device is not reopened every frame. The stream closes when the button is released and
 //! the grain has played, when the setting is off, or when playback starts.
+//!
+//! Stepping with the arrow keys (← / →, with Shift five frames) plays a grain too, as in
+//! Premiere: a key press counts as holding the scrub for [`KEY_HOLD_S`].
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -19,6 +22,9 @@ pub const GRAIN_S: f64 = 0.08;
 const RAMP_S: f64 = 0.004;
 /// How long the stream stays open after the last move once the button is up.
 const LINGER_S: f64 = 0.25;
+/// How long after an arrow key press a playhead move still counts as a scrub (the step can land a
+/// frame or two after the key).
+pub const KEY_HOLD_S: f64 = 0.15;
 
 /// What the audio callback plays next: `left` of `total` frames from `cursor`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -35,11 +41,19 @@ pub struct ScrubAudio {
     open: bool,
     last_tick: Option<Tick>,
     last_move: f64,
+    /// When an arrow key was last pressed or held.
+    last_key: Option<f64>,
 }
 
 impl ScrubAudio {
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// Whether the scrub is held at `now`: a mouse button is down, or an arrow key was pressed
+    /// within [`KEY_HOLD_S`].
+    pub(crate) fn held(&self, now: f64, pointer_down: bool) -> bool {
+        pointer_down || self.last_key.is_some_and(|t| (0.0..KEY_HOLD_S).contains(&(now - t)))
     }
 
     /// The output device was stopped under the stream: the next grain reopens it.
@@ -51,8 +65,15 @@ impl ScrubAudio {
 impl FilmcraftApp {
     /// Once a frame: play a grain when the playhead moved under a held mouse button.
     pub(crate) fn scrub_audio(&mut self, ctx: &egui::Context) {
-        let (now, down) = ctx.input(|i| (i.time, i.pointer.any_down()));
-        if self.scrub_tick(now, down) {
+        let (now, down, arrow) = ctx.input(|i| {
+            let arrow = [egui::Key::ArrowLeft, egui::Key::ArrowRight].into_iter().any(|k| i.key_pressed(k) || i.key_down(k));
+            (i.time, i.pointer.any_down(), arrow)
+        });
+        // typing in a field moves its cursor, not the playhead
+        if arrow && !ctx.text_edit_focused() {
+            self.scrub.last_key = Some(now);
+        }
+        if self.scrub_tick(now, self.scrub.held(now, down)) {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(LINGER_S));
         }
     }
@@ -211,6 +232,21 @@ mod tests {
         let mut buf = vec![0.0; 4096 * 2]; // more than a grain
         f(&mut buf, 2);
         buf.iter().map(|s| s.abs()).sum()
+    }
+
+    /// Arrow-key steps: a press counts as holding for KEY_HOLD_S, so the step that follows plays.
+    #[test]
+    fn an_arrow_key_step_plays_a_grain() {
+        let (mut app, fill) = app(true);
+        let rate = app.session.sequence_rate();
+        app.session.set_playhead(rate.tick_of(48));
+        app.scrub_tick(0.0, false);
+        app.scrub.last_key = Some(0.01);
+        app.session.set_playhead(rate.tick_of(49));
+        assert!(app.scrub_tick(0.02, app.scrub.held(0.02, false)), "the step plays");
+        assert!(loudness(&fill) > 0.0);
+        assert!(!app.scrub.held(0.5, false), "the hold runs out");
+        assert!(app.scrub.held(0.5, true), "a held button still counts");
     }
 
     /// #211: moving the playhead with the button down plays the sequence's sound at the new spot;

@@ -178,3 +178,38 @@ fn the_palette_labels_selected_clips() {
     assert_eq!(it.label, filmcraft_project::Label::Yellow);
     assert!(d.harness.state().ui.palette.is_none());
 }
+
+/// "constant gain" puts a Constant Gain audio transition at both ends of every selected audio clip,
+/// in one undo step.
+#[test]
+fn the_palette_applies_a_transition_to_every_selected_clip() {
+    let (mut d, _) = Driver::demo();
+    let clips: Vec<u64> = {
+        let q = d.harness.state().session.active_sequence().unwrap();
+        q.audio_tracks.iter().flat_map(|t| t.items.iter().map(|i| i.id.0)).collect()
+    };
+    assert!(clips.len() >= 2, "the demo has audio clips");
+    d.exec("timeline.select", json!({"clips": clips}));
+    let undo = d.harness.state().session.history.undo.len();
+    d.exec("window.commandPalette", json!({}));
+    d.frames(3);
+    d.ok("ui.type", json!({"text": "constant gain"}));
+    d.frames(2);
+    let top = d.ok("ui.elements", json!({"prefix": "palette.item.0"}));
+    assert!(top.to_string().contains("Transition: Constant Gain"), "{top}");
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    let s = &d.harness.state().session;
+    let q = s.active_sequence().unwrap();
+    for c in &clips {
+        let ends = q
+            .audio_tracks
+            .iter()
+            .flat_map(|t| &t.transitions)
+            .filter(|t| t.from == Some(filmcraft_project::ClipId(*c)) || t.to == Some(filmcraft_project::ClipId(*c)))
+            .count();
+        assert!(ends >= 1, "clip {c} has a transition");
+    }
+    assert!(q.audio_tracks.iter().flat_map(|t| &t.transitions).any(|t| t.effect.effect == "constant_gain"), "Constant Gain");
+    assert_eq!(s.history.undo.len(), undo + 1, "one undo step");
+}

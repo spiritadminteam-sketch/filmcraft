@@ -2,6 +2,8 @@
 //! do, in the spirit of Premiere's Excalibur extension. Type part of a name and press Enter:
 //! - any menu or keyboard command (it runs as from its menu);
 //! - an effect ("Effect: Gaussian Blur"), applied to every selected clip in one undo step;
+//! - a transition ("Transition: Constant Gain"), applied at both ends of every selected clip of
+//!   its kind (video or audio) in one undo step, or at the playhead's cut with nothing selected;
 //! - a text fill colour ("Fill: Yellow"), set on every selected graphic in one undo step;
 //! - a speaker marker at the playhead ("Marker: Random");
 //! - values, typed: `+5` / `-12` move the playhead by frames (`1.` one second, `2..` two
@@ -43,6 +45,8 @@ pub struct PaletteState {
 pub enum Action {
     Command(String),
     Effect(String),
+    /// A transition: (effect id, true for video).
+    Transition(String, bool),
     Fill(&'static str),
     /// Move the playhead by this many frames.
     Step(i64),
@@ -60,6 +64,7 @@ impl Action {
         match self {
             Action::Command(id) => format!("cmd:{id}"),
             Action::Effect(id) => format!("fx:{id}"),
+            Action::Transition(id, _) => format!("tr:{id}"),
             Action::Fill(hex) => format!("fill:{hex}"),
             Action::Step(n) => format!("step:{n}"),
             Action::Set(e, p, v) => format!("set:{e}.{p}={v}"),
@@ -124,7 +129,21 @@ pub fn entries(app: &FilmcraftApp) -> Vec<Entry> {
         });
     }
     for e in filmcraft_project::all_effect_defs() {
-        if e.intrinsic || !matches!(e.kind, EffectKind::Video | EffectKind::Audio) {
+        if e.intrinsic {
+            continue;
+        }
+        if matches!(e.kind, EffectKind::VideoTransition | EffectKind::AudioTransition) {
+            let video = e.kind == EffectKind::VideoTransition;
+            let kind = if video { "Video Transition (selected clips)" } else { "Audio Transition (selected clips)" };
+            out.push(Entry {
+                label: format!("Transition: {}", e.name),
+                detail: kind.into(),
+                shortcut: None,
+                action: Action::Transition(e.id.to_string(), video),
+            });
+            continue;
+        }
+        if !matches!(e.kind, EffectKind::Video | EffectKind::Audio) {
             continue;
         }
         let kind = if e.kind == EffectKind::Video { "Video Effect" } else { "Audio Effect" };
@@ -316,6 +335,10 @@ pub fn run(app: &mut FilmcraftApp, ctx: &egui::Context, a: &Action) -> Result<()
             } else {
                 app.session.execute("effects.apply", json!({"clips": clips, "effect": id})).map(|_| ()).map_err(|e| e.to_string())
             }
+        }
+        Action::Transition(id, video) => {
+            let cmd = if *video { "sequence.applyVideoTransition" } else { "sequence.applyAudioTransition" };
+            app.session.execute(cmd, json!({"effect": id})).map(|_| ()).map_err(|e| e.to_string())
         }
         Action::Step(n) => app.session.execute("playhead.step", json!({"frames": n})).map(|_| ()).map_err(|e| e.to_string()),
         Action::Set(effect, param, v) => {

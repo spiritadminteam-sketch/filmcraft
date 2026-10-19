@@ -268,6 +268,9 @@ impl FilmcraftApp {
                         self.ui.status = error.to_string();
                     }
                 }
+                DockAction::Maximize(panel) => {
+                    let _ = panels::keyboard::toggle_maximize(self, panel);
+                }
                 DockAction::PanelMenu(panel, pos) => {
                     let frame = ctx.cumulative_frame_nr();
                     ctx.data_mut(|data| {
