@@ -238,6 +238,10 @@ impl FilmcraftApp {
         for action in layout_actions {
             let _ = self.dock_command(&ctx, action);
         }
+        // a double-clicked tab, applied after the panel drag below: the clicks can also start and
+        // drop a drag of that tab onto itself, which counts as moving the panel and restores the
+        // layout
+        let mut maximize = None;
         for action in actions {
             match action {
                 DockAction::Activate(panel) => {
@@ -268,16 +272,7 @@ impl FilmcraftApp {
                         self.ui.status = error.to_string();
                     }
                 }
-                DockAction::Maximize(panel) => {
-                    // once per frame: egui can run a frame twice (a discarded pass) with the same
-                    // double-click, which would maximize and restore at once
-                    let frame = ctx.cumulative_frame_nr();
-                    let key = egui::Id::new("tab-maximize-frame");
-                    if ctx.data(|d| d.get_temp::<u64>(key)) != Some(frame) {
-                        ctx.data_mut(|d| d.insert_temp(key, frame));
-                        let _ = panels::keyboard::toggle_maximize(self, panel);
-                    }
-                }
+                DockAction::Maximize(panel) => maximize = Some(panel),
                 DockAction::PanelMenu(panel, pos) => {
                     let frame = ctx.cumulative_frame_nr();
                     ctx.data_mut(|data| {
@@ -288,6 +283,17 @@ impl FilmcraftApp {
             }
         }
         self.panel_drag(&ctx, body, &targets);
+        if let Some(panel) = maximize {
+            ctx.data_mut(|data| data.remove::<PanelKind>(drag_id()));
+            // once per frame: egui can run a frame twice (a discarded pass) with the same
+            // double-click, which would maximize and restore at once
+            let frame = ctx.cumulative_frame_nr();
+            let key = egui::Id::new("tab-maximize-frame");
+            if ctx.data(|d| d.get_temp::<u64>(key)) != Some(frame) {
+                ctx.data_mut(|d| d.insert_temp(key, frame));
+                let _ = panels::keyboard::toggle_maximize(self, panel);
+            }
+        }
         panels::panel_menu_popup(self, ui);
         self.cancel_value_drag(ui.ctx());
     }
