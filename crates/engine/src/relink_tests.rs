@@ -201,3 +201,169 @@ fn explicit_folder_remaps_normalize_both_prefixes_and_respect_boundaries() {
     assert_eq!(apply_remap("C:/shoot/Media/a.mov", r"C:\shoot\Media", r"D:\archive\Media"), Some("D:/archive/Media/a.mov".into()));
     assert_eq!(apply_remap("C:/shoot/Media2/a.mov", r"C:\shoot\Media", r"D:\archive\Media"), None);
 }
+
+/// #1054: an export (or a rendered frame) that draws the offline slate names the offline items it
+/// used, with their status, so a headless caller can tell placeholder frames from real ones. Media
+/// outside the exported range is not reported.
+#[test]
+fn export_names_the_offline_media_it_rendered() {
+    let root = tmp_dir("relink-export-offline");
+    let (path, items) = saved_project(&root);
+    let out = |name: &str| root.join(name).to_string_lossy().into_owned();
+    let mut s = open(&path);
+    let r = s
+        .execute("file.exportMedia", json!({"path": out("on.png"), "format": "png", "range": "custom", "startSeconds": 0, "endSeconds": 0.05, "wait": true}))
+        .unwrap();
+    assert_eq!(r["offlineMedia"], json!([]), "{r}");
+    std::fs::remove_file(root.join("Media/a.mov")).unwrap();
+    let mut s = open(&path);
+    // b.mov (frames 12..24) is still there
+    let r = s
+        .execute("file.exportMedia", json!({"path": out("b.png"), "format": "png", "range": "custom", "startSeconds": 0.6, "endSeconds": 0.65, "wait": true}))
+        .unwrap();
+    assert_eq!(r["offlineMedia"], json!([]), "{r}");
+    let r = s.execute("file.exportMedia", json!({"path": out("all.wav"), "format": "wav", "wait": true})).unwrap();
+    let off = r["offlineMedia"].as_array().unwrap();
+    assert_eq!(off.len(), 1, "{r}");
+    assert_eq!(off[0]["item"], json!(items[0].0));
+    assert_eq!(off[0]["name"], json!("a.mov"));
+    assert_eq!(off[0]["status"], json!("missing"));
+    assert!(off[0]["path"].as_str().unwrap().ends_with("a.mov"), "{r}");
+    // made offline on purpose
+    s.execute("media.makeOffline", json!({"items": [items[1].0]})).unwrap();
+    let r = s
+        .execute("file.exportMedia", json!({"path": out("b2.png"), "format": "png", "range": "custom", "startSeconds": 0.6, "endSeconds": 0.65, "wait": true}))
+        .unwrap();
+    assert_eq!(
+        r["offlineMedia"].as_array().map(|a| a.iter().map(|o| (o["item"].clone(), o["status"].clone())).collect::<Vec<_>>()),
+        Some(vec![(json!(items[1].0), json!("offline"))]),
+        "{r}"
+    );
+    // the queue reports it per item
+    let r = s
+        .execute(
+            "export.queue.add",
+            json!({"path": out("q.png"), "format": "png", "range": "custom", "startSeconds": 0.6, "endSeconds": 0.65, "start": true, "wait": true}),
+        )
+        .unwrap();
+    assert_eq!(r["items"][0]["offlineMedia"][0]["status"], json!("offline"), "{r}");
+    // one rendered frame
+    let (_, off) = s.try_render_program_with_offline_at(0.5, s.sequence_rate().tick_of(3)).unwrap();
+    assert_eq!(off.iter().map(|o| (o.item, o.status)).collect::<Vec<_>>(), [(items[0].0, "missing")]);
+    let (_, off) = s.try_render_program_with_offline_at(0.5, s.sequence_rate().tick_of(30)).unwrap();
+    assert!(off.is_empty(), "nothing on the timeline there: {off:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// #1054: `jobs.list` carries an export job's `offlineMedia`, for callers that poll the job (the
+/// bridge and MCP long exports) instead of waiting in `file.exportMedia`.
+#[test]
+fn jobs_list_reports_an_exports_offline_media() {
+    let root = tmp_dir("relink-jobs-offline");
+    let (path, items) = saved_project(&root);
+    std::fs::remove_file(root.join("Media/b.mov")).unwrap();
+    let mut s = open(&path);
+    let out = root.join("all.wav").to_string_lossy().into_owned();
+    let job = s.execute("file.exportMedia", json!({"path": out, "format": "wav", "wait": true})).unwrap()["job"].clone();
+    let jobs = s.execute("jobs.list", json!({})).unwrap();
+    let j = jobs.as_array().unwrap().iter().find(|j| j["id"] == job).unwrap();
+    assert_eq!(j["offlineMedia"][0]["item"], json!(items[1].0), "{j}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn deleting_bin_keeps_subclip_source_but_removes_unused_media() {
+    let root = tmp_dir("delete-bin-used-media");
+    let (path, items) = saved_project(&root);
+    let mut s = open(&path);
+    let p = std::sync::Arc::make_mut(&mut s.project);
+    let seq = s.state.active_sequence.unwrap();
+    let range = filmcraft_time::TimeRange::new(filmcraft_time::Tick::ZERO, p.item(items[0]).unwrap().duration());
+    let sub =
+        p.add_item("Subclip", filmcraft_project::Label::Iris, filmcraft_project::ItemKind::Subclip { parent: items[0], range, restrict_trims: false }, None);
+    for track in p.sequence_mut(seq).unwrap().all_tracks_mut() {
+        track.items.retain(|clip| clip.item != items[1]);
+        for clip in &mut track.items {
+            clip.item = sub;
+        }
+    }
+    let bin = p.add_bin("Sources", None);
+    p.move_to_bin(&items, Some(bin)).unwrap();
+    let before = s.active_sequence().unwrap().clone();
+    s.execute("project.delete", json!({"items": [bin.0, items[0].0, bin.0]})).unwrap();
+    assert_eq!(s.active_sequence().unwrap(), &before);
+    assert!(s.project.root.find_bin(bin).is_none());
+    assert!(s.project.item(items[0]).unwrap().as_media().unwrap().offline);
+    assert!(s.project.item(items[1]).is_none());
+    assert!(s.project.resolve_media(sub).unwrap().1.offline);
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project.root.parent_of(items[0]), Some(bin));
+    assert!(s.project.item(items[1]).is_some());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn deleting_sequence_and_its_media_does_not_keep_an_unused_source() {
+    let root = tmp_dir("delete-sequence-and-media");
+    let (path, items) = saved_project(&root);
+    let mut s = open(&path);
+    let seq = s.state.active_sequence.unwrap();
+    s.execute("project.delete", json!({"items": [seq.0, items[0].0]})).unwrap();
+    assert!(s.project.item(seq).is_none());
+    assert!(s.project.item(items[0]).is_none());
+    assert!(s.project.item(items[1]).is_some());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn deleting_subclip_and_source_does_not_keep_an_unused_source() {
+    let root = tmp_dir("delete-subclip-and-source");
+    let (path, items) = saved_project(&root);
+    let mut s = open(&path);
+    let seq = s.state.active_sequence.unwrap();
+    let p = std::sync::Arc::make_mut(&mut s.project);
+    let range = filmcraft_time::TimeRange::new(filmcraft_time::Tick::ZERO, p.item(items[0]).unwrap().duration());
+    let sub =
+        p.add_item("Subclip", filmcraft_project::Label::Iris, filmcraft_project::ItemKind::Subclip { parent: items[0], range, restrict_trims: false }, None);
+    for t in p.sequence_mut(seq).unwrap().all_tracks_mut() {
+        for c in &mut t.items {
+            if c.item == items[0] {
+                c.item = sub;
+            }
+        }
+    }
+    s.execute("project.delete", json!({"items": [sub.0, items[0].0]})).unwrap();
+    assert!(s.project.item(sub).is_none());
+    assert!(s.project.item(items[0]).is_none(), "a removed timeline subclip must not retain its unused source");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn deleting_bin_preserves_intermediate_subclip_needed_by_surviving_clip() {
+    let root = tmp_dir("delete-intermediate-subclip");
+    let (path, items) = saved_project(&root);
+    let mut s = open(&path);
+    let seq = s.state.active_sequence.unwrap();
+    let p = std::sync::Arc::make_mut(&mut s.project);
+    let range = filmcraft_time::TimeRange::new(filmcraft_time::Tick::ZERO, p.item(items[0]).unwrap().duration());
+    let parent =
+        p.add_item("Parent", filmcraft_project::Label::Iris, filmcraft_project::ItemKind::Subclip { parent: items[0], range, restrict_trims: false }, None);
+    let outer = p.add_item("Outer", filmcraft_project::Label::Iris, filmcraft_project::ItemKind::Subclip { parent, range, restrict_trims: false }, None);
+    for t in p.sequence_mut(seq).unwrap().all_tracks_mut() {
+        for c in &mut t.items {
+            if c.item == items[0] {
+                c.item = outer;
+            }
+        }
+    }
+    let bin = p.add_bin("Sources", None);
+    p.move_to_bin(&[items[0], parent], Some(bin)).unwrap();
+    let before = s.active_sequence().unwrap().clone();
+    s.execute("project.delete", json!({"items": [bin.0]})).unwrap();
+    assert_eq!(s.active_sequence().unwrap(), &before);
+    assert!(s.project.resolve_media(outer).is_some(), "the surviving nested subclip must still resolve");
+    assert!(s.project.resolve_media(outer).unwrap().1.offline);
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.project.root.parent_of(parent), Some(bin));
+    let _ = std::fs::remove_dir_all(root);
+}

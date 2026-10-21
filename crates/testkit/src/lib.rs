@@ -16,7 +16,9 @@ pub mod oracle;
 pub mod wav;
 
 pub use fixtures::{fixtures_dir, temp_path, workspace_root};
-pub use oracle::{ffmpeg, ffmpeg_or_skip, ffprobe, ffprobe_or_skip, oracles_required, skip};
+pub use oracle::{
+    ffmpeg, ffmpeg_or_skip, ffmpeg_supports_format, ffmpeg_version, ffmpeg_with_format_or_skip, ffprobe, ffprobe_or_skip, oracles_required, skip,
+};
 
 /// `let ff = require_ffmpeg!();` — the ffmpeg path, or return from the test after printing
 /// `SKIPPED: … ffmpeg not found` (a hard failure with `FILMCRAFT_REQUIRE_ORACLES=1`).

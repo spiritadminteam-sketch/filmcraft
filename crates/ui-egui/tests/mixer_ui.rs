@@ -21,12 +21,19 @@ struct Driver {
 
 impl Driver {
     fn demo() -> Self {
+        Self::demo_with_step_dt(None)
+    }
+
+    fn demo_with_step_dt(step_dt: Option<f32>) -> Self {
         let mut session = Session::default();
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session).with_control(rx);
         let snapshots = std::env::var_os("FILMCRAFT_UI_SNAPSHOT_DIR").map(std::path::PathBuf::from);
         let mut b = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).with_max_steps(10_000);
+        if let Some(dt) = step_dt {
+            b = b.with_step_dt(dt);
+        }
         if snapshots.is_some() {
             b = b.wgpu();
         }
@@ -269,6 +276,86 @@ fn clip_mixer_strips_follow_the_playhead() {
     d.snapshot("mixer-clip-mixer", Some("clipMixer."));
 }
 
+/// Horizontal extent `[left, right]` of each Clip Mixer strip `A1 … An` (its controls), `None` for
+/// a strip that is not drawn.
+fn clip_strip_spans(d: &mut Driver, n: usize) -> Vec<Option<[f32; 2]>> {
+    let v = d.ok("ui.elements", json!({"prefix": "clipMixer.A"}));
+    let elements = v.as_array().unwrap();
+    (1..=n)
+        .map(|i| {
+            let prefix = format!("clipMixer.A{i}.");
+            elements
+                .iter()
+                .filter(|e| e["id"].as_str().is_some_and(|id| id.starts_with(&prefix)))
+                .map(|e| {
+                    let x = e["rect"][0].as_f64().unwrap() as f32;
+                    [x, x + e["rect"][2].as_f64().unwrap() as f32]
+                })
+                .reduce(|a, b| [a[0].min(b[0]), a[1].max(b[1])])
+        })
+        .collect()
+}
+
+/// #1922: like Premiere, the Audio Clip Mixer narrows its strips so that every track fits the
+/// panel, and below the narrowest usable strip it scrolls: no track is ever out of reach.
+#[test]
+fn clip_mixer_strips_narrow_to_fit_the_panel() {
+    let mut d = Driver::demo();
+    d.ok("ui.panel.show", json!({"panel": "AudioClipMixer"}));
+    d.frames(3);
+    let panel = d.element("panel.AudioClipMixer").expect("clip mixer panel");
+    let (left, right) = (panel[0], panel[0] + panel[2]);
+    let have = d.exec("sequence.inspect", json!({}))["audio"].as_array().unwrap().len();
+    let n = 8;
+    d.exec("sequence.addTracks", json!({"video": 0, "audio": n - have}));
+    d.frames(3);
+    assert!(n as f32 * 100.0 > panel[2], "{n} full-width strips would fit the {} px panel", panel[2]);
+    let spans = clip_strip_spans(&mut d, n);
+    for (i, s) in spans.iter().enumerate() {
+        let s = s.unwrap_or_else(|| panic!("A{} is not shown in the {} px panel: {spans:?}", i + 1, panel[2]));
+        assert!(s[0] >= left && s[1] <= right, "A{} {s:?} outside the panel {left}…{right}", i + 1);
+    }
+    for w in spans.windows(2) {
+        let (a, b) = (w[0].unwrap(), w[1].unwrap());
+        assert!(a[1] < b[0], "strips overlap: {a:?} {b:?}");
+    }
+    // the narrowed strip still lays its buttons out side by side
+    for i in 1..=n {
+        let [m, s, k] = ["mute", "solo", "keyframe"].map(|c| d.element(&format!("clipMixer.A{i}.{c}")).unwrap());
+        assert!(m[0] + m[2] <= s[0] && s[0] + s[2] <= k[0], "A{i} buttons overlap: {m:?} {s:?} {k:?}");
+    }
+    assert!(d.element("clipMixer.scroll").is_none(), "no scrollbar while every strip fits");
+    d.snapshot("mixer-clip-mixer-narrow", Some("clipMixer."));
+
+    // too many tracks even for the narrowest strips: the row scrolls to the last one
+    let n = 30;
+    d.exec("sequence.addTracks", json!({"video": 0, "audio": 22}));
+    d.frames(3);
+    let spans = clip_strip_spans(&mut d, n);
+    assert!(spans[n - 1].is_none(), "A{n} cannot fit before scrolling: {spans:?}");
+    let shown: Vec<[f32; 2]> = spans.iter().flatten().copied().collect();
+    for w in shown.windows(2) {
+        assert!(w[0][1] < w[1][0], "strips overlap: {:?} {:?}", w[0], w[1]);
+    }
+    let knob = d.element("clipMixer.scroll").expect("a scrollbar when the strips cannot all fit");
+    let mut p = egui::pos2(knob[0] + knob[2] / 2.0, knob[1] + knob[3] / 2.0);
+    let push = |d: &mut Driver, e: egui::Event| d.harness.input_mut().events.push(e);
+    push(&mut d, egui::Event::PointerMoved(p));
+    d.frames(1);
+    push(&mut d, egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    d.frames(1);
+    for _ in 0..6 {
+        p.x += panel[2] / 4.0;
+        push(&mut d, egui::Event::PointerMoved(p));
+        d.frames(1);
+    }
+    push(&mut d, egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    d.frames(2);
+    let last = clip_strip_spans(&mut d, n)[n - 1].unwrap_or_else(|| panic!("A{n} is still out of reach after scrolling"));
+    assert!(last[0] >= left && last[1] <= right, "A{n} {last:?} outside the panel {left}…{right}");
+    d.snapshot("mixer-clip-mixer-scrolled", Some("clipMixer."));
+}
+
 #[test]
 fn clip_mixer_db_value_can_be_typed() {
     let mut d = Driver::demo();
@@ -290,6 +377,68 @@ fn clip_mixer_db_value_can_be_typed() {
     assert!((level + 20.0).abs() < 1e-6, "typed -20 dB into the clip mixer readout: {level}");
 }
 
+/// #817: a typed calculation, also one that starts with `*` or `/` and applies to the value.
+#[test]
+fn clip_mixer_db_value_takes_a_calculation() {
+    let mut d = Driver::demo();
+    d.ok("ui.panel.show", json!({"panel": "AudioClipMixer"}));
+    d.frames(3);
+    d.exec("playhead.set", json!({"seconds": 1.0}));
+    d.frames(2);
+    let level = |d: &mut Driver| -> f64 {
+        let seq = d.exec("sequence.inspect", json!({}));
+        let fx = &seq["audio"][0]["items"][0]["effects"];
+        let vol = fx.as_array().unwrap().iter().find(|e| e["effect"] == "volume").unwrap();
+        vol["params"]["level"]["value"].as_str().and_then(|v| v.strip_prefix("Float(")?.strip_suffix(')')?.parse().ok()).unwrap()
+    };
+    let enter = |d: &mut Driver, keys: &[&str], text: &str| {
+        d.click("clipMixer.A1.value");
+        d.frames(2);
+        for k in keys {
+            d.ok("ui.key", json!({"key": k}));
+        }
+        d.ok("ui.type", json!({"text": text}));
+        d.frames(2);
+        d.ok("ui.key", json!({"key": "Enter"}));
+        d.frames(3);
+    };
+    assert!((level(&mut d) + 8.0).abs() < 1e-6, "the demo's -8 dB");
+    // the value opens selected: `*2` replaces it and doubles it
+    enter(&mut d, &[], "*2");
+    assert!((level(&mut d) + 16.0).abs() < 1e-6, "{}", level(&mut d));
+    // added after the value: `-16.0/4`
+    enter(&mut d, &["End"], "/4");
+    assert!((level(&mut d) + 4.0).abs() < 1e-6, "{}", level(&mut d));
+    enter(&mut d, &[], "(1+2)*-3");
+    assert!((level(&mut d) + 9.0).abs() < 1e-6, "{}", level(&mut d));
+    // not a calculation: the value stays
+    enter(&mut d, &[], "2*");
+    assert!((level(&mut d) + 9.0).abs() < 1e-6, "{}", level(&mut d));
+}
+
+/// #817: the number fields of dialogs take calculations too.
+#[test]
+fn audio_gain_dialog_field_takes_a_calculation() {
+    let mut d = Driver::demo();
+    let seq = d.exec("sequence.inspect", json!({}));
+    let clip = seq["audio"][0]["items"][0]["clip"].as_u64().unwrap();
+    d.exec("timeline.select", json!({"clips": [clip]}));
+    let peak = |d: &mut Driver| d.exec("clip.audioPeak", json!({"clips": [clip]}))["peakDb"].as_f64().unwrap();
+    let before = peak(&mut d);
+    d.ok("ui.menu.invoke", json!({"id": "clip.audioGain"}));
+    d.frames(3);
+    d.click("audioGain.adjust");
+    d.click("audioGain.adjust.value");
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Cmd+A"}));
+    d.ok("ui.type", json!({"text": "1.5*2"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(2);
+    d.click("audioGain.ok");
+    assert!((peak(&mut d) - (before + 3.0)).abs() < 0.05, "3 dB louder: {before} -> {}", peak(&mut d));
+}
+
 #[test]
 fn audio_gain_dialog_normalizes_the_selection() {
     let mut d = Driver::demo();
@@ -309,4 +458,41 @@ fn audio_gain_dialog_normalizes_the_selection() {
     let pk = d.exec("clip.audioPeak", json!({"clips": [clip]}));
     assert!(pk["peakDb"].as_f64().unwrap().abs() < 1e-6, "normalized to 0 dB: {pk}");
     assert!(d.ids("audioGain.").is_empty(), "dialog closed");
+}
+
+/// #1062: after Stop, the meter must finish its release without pointer events, then let the
+/// window sleep. Run only frames requested by egui; forcing frames would hide the original bug.
+#[test]
+fn paused_meters_repaint_without_input_and_settle_after_release() {
+    for workspace in ["Editing", "Audio"] {
+        let mut d = Driver::demo_with_step_dt(Some(0.1));
+        d.ok("ui.set", json!({"workspace": workspace}));
+        d.ok("ui.playback", json!({"action": "play"}));
+        d.frames(10);
+        let prefix = if workspace == "Audio" { "mixer.Mix.meter" } else { "audioMeters.channel." };
+        let playing = d.ok("ui.elements", json!({"prefix": prefix}));
+        let labels = |elements: &Value| elements.as_array().unwrap().iter().map(|e| e["label"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let active = labels(&playing);
+        assert!(!active.is_empty(), "{workspace}: the meters must be visible");
+        assert!(active.iter().any(|label| !label.contains("-90.0")), "{workspace}: the demo must feed the meters: {active:?}");
+        d.ok("ui.playback", json!({"action": "stop"}));
+        assert!(!d.harness.state().playback.playing);
+        d.snapshot(&format!("meters-{workspace}-paused-start"), None);
+        // Harness::run follows immediate repaint requests, adding no mouse or keyboard input.
+        let steps = d.harness.run();
+        // Inspect both values that drive the bars: a silent level alone must not strand its
+        // slower peak hold. No new frames or pointer events are injected to read this state.
+        let (_, meters): (u64, std::collections::HashMap<u64, Vec<[f32; 2]>>) =
+            d.harness.ctx.data(|data| data.get_temp(egui::Id::new("mixer-meters"))).unwrap();
+        assert!(!meters.is_empty());
+        assert!(meters.values().flatten().all(|meter| *meter == [-90.0; 2]), "{workspace}: meters stopped after {steps} requested frames: {meters:?}");
+        assert_ne!(
+            d.harness.output().viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            std::time::Duration::ZERO,
+            "{workspace}: silent meters must not keep repainting"
+        );
+        let quiet = d.ok("ui.elements", json!({"prefix": prefix}));
+        assert!(labels(&quiet).iter().all(|label| label.contains("-90.0")), "{workspace}: {:?}", labels(&quiet));
+        d.snapshot(&format!("meters-{workspace}-paused-silent"), None);
+    }
 }

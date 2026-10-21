@@ -347,6 +347,7 @@ impl Mp4Source {
                 Some(Mp4Audio { track: i, state, starts, offset, preroll })
             })
             .collect();
+        snap_to_frame_grid(&mut file, vtrack);
         rebase_unedited_video(&mut file, vtrack, &mut audios);
         Ok(Self { info, bytes, file, vtrack, video: GopCache::new(explicit_color).with_rotation(rotation).with_crop(aperture), audios })
     }
@@ -540,7 +541,8 @@ fn audio_stream_info(t: &filmcraft_isobmff::Track, bytes: &crate::Src) -> Option
                     None => ap.sample_rate as u32,
                 }
             },
-            if a.channel_config > 0 { a.channel_config as u32 } else { ap.channels },
+            // the configuration is an index (7 and 12 are both eight channels), not a count
+            if a.channels() > 0 { a.channels() } else { ap.channels },
             None,
         ),
         CodecConfig::Pcm(p) => (p.sample_rate as u32, p.channels, Some(p.bits as u32)),
@@ -577,6 +579,7 @@ fn codec_label(c: &CodecConfig) -> String {
         ),
         CodecConfig::Hevc(_) => "HEVC".into(),
         CodecConfig::Vp9(c) => format!("VP9 (Profile {})", c.profile),
+        CodecConfig::Unknown { fourcc, .. } if fourcc.0 == *b"vp08" => "VP8".into(),
         CodecConfig::Av1(c) => format!("AV1 ({} Profile)", ["Main", "High", "Professional"].get(c.seq_profile as usize).unwrap_or(&"Main")),
         CodecConfig::Apv(a) => match filmcraft_apv::Profile::from_idc(a.profile_idc) {
             Some(p) => p.name().into(),
@@ -617,10 +620,16 @@ fn yuv_label(chroma_format_idc: u32, bits: u32) -> String {
     format!("YUV {sub} {bits}-bit")
 }
 
-/// `chroma_format_idc` and luma bit depth of an H.264 track: from the `avcC` High-profile extension
-/// (ISO/IEC 14496-15 §5.3.3), else from its first SPS. The profile alone can't say (High 4:2:2 is
-/// 8 or 10-bit, High 10 can be 8-bit).
+/// `chroma_format_idc` and luma bit depth of an H.264 track: from its first SPS, which is what the
+/// decoder decodes, else from the `avcC` High-profile extension (ISO/IEC 14496-15 §5.3.3). The
+/// extension is not trusted over the SPS: muxers have been seen writing `chroma_format` 0 (4:0:0)
+/// into it for 4:2:0 files, which labelled them "4:0:0" (#1959). The profile alone can't say (High
+/// 4:2:2 is 8 or 10-bit, High 10 can be 8-bit).
 fn avc_format(a: &filmcraft_isobmff::AvcConfig) -> Option<(u32, u32)> {
+    let from_sps = a.sps.first().and_then(|n| n.get(1..)).and_then(|rbsp| filmcraft_h264::params::Sps::parse(&filmcraft_bitstream::unescape_rbsp(rbsp)).ok());
+    if let Some(sps) = from_sps {
+        return Some((sps.chroma_format_idc, sps.bit_depth_luma));
+    }
     // reserved bits set: '111111' chroma_format, '11111' bit_depth_luma_minus8 (else not an extension)
     if !matches!(a.profile, 66 | 77 | 88)
         && let &[chroma, depth, ..] = a.ext.as_slice()
@@ -629,14 +638,26 @@ fn avc_format(a: &filmcraft_isobmff::AvcConfig) -> Option<(u32, u32)> {
     {
         return Some(((chroma & 3) as u32, (depth & 7) as u32 + 8));
     }
-    let sps = filmcraft_h264::params::Sps::parse(&filmcraft_bitstream::unescape_rbsp(a.sps.first()?.get(1..)?)).ok()?;
-    Some((sps.chroma_format_idc, sps.bit_depth_luma))
+    None
+}
+
+/// `chroma_format_idc` and luma bit depth of an HEVC track: from its first SPS, which is what the
+/// decoder decodes, else the `hvcC` record's own fields (which a muxer may leave at 0, i.e. "4:0:0").
+fn hevc_format(h: &filmcraft_isobmff::HevcConfig) -> (u32, u32) {
+    let from_sps = h.sps().first().and_then(|n| n.get(2..)).and_then(|rbsp| filmcraft_hevc::params::Sps::parse(&filmcraft_bitstream::unescape_rbsp(rbsp)).ok());
+    match from_sps {
+        Some(sps) => (sps.chroma_format_idc, sps.bit_depth_luma),
+        None => (h.chroma_format_idc as u32, h.bit_depth_luma as u32),
+    }
 }
 
 fn pixfmt_label(c: &CodecConfig) -> String {
     match c {
         CodecConfig::Avc(a) => avc_format(a).map(|(chroma, bits)| yuv_label(chroma, bits)).unwrap_or_default(),
-        CodecConfig::Hevc(h) => yuv_label(h.chroma_format_idc as u32, h.bit_depth_luma as u32),
+        CodecConfig::Hevc(h) => {
+            let (chroma, bits) = hevc_format(h);
+            yuv_label(chroma, bits)
+        }
         CodecConfig::Vp9(c) => {
             let sub = match c.chroma_subsampling {
                 2 => "4:2:2",
@@ -662,6 +683,66 @@ pub fn opener(name: &str, bytes: Arc<[u8]>) -> Option<Result<SharedSource, Media
         return None;
     }
     Some(Mp4Source::open(name, bytes).map(|s| Arc::new(s) as SharedSource).map_err(Into::into))
+}
+
+/// Put the video samples of a constant-rate file whose pictures sit just off its frame grid back
+/// on the grid (#1282). Phone footage stamps frames up to a millisecond after where they belong (a
+/// first frame 34.1 ms long at 30 fps), and the frame shown at a time is the last one that starts at
+/// or before it: a sequence frame asked at the exact grid time got the picture before.
+///
+/// The grid starts at the first picture and steps by the nominal frame duration. A file is snapped
+/// only when every picture is less than a quarter of a frame from its own grid point and no two land
+/// on the same one: a frame that far off was placed there (variable frame rate), so a file with one
+/// such picture keeps all its times. A picture at most one unit off is left where it is: that can't
+/// be told from the timescale's rounding. Snapping keeps the samples' presentation order. Only the video samples move: the first picture, which the audio and
+/// `rebase_unedited_video` go by, is the grid's origin, and the clip's duration comes from the
+/// track header.
+fn snap_to_frame_grid(file: &mut Mp4File, vtrack: Option<usize>) {
+    let Some(t) = vtrack.and_then(|i| file.tracks.get_mut(i)) else { return };
+    let Some(first) = t.samples.iter().map(|s| s.pts).min() else { return };
+    // The nominal duration: the median sample duration, averaged with the durations one unit from
+    // it. Those are the same duration rounded to the timescale (1501 and 1502 at 59.94 fps over
+    // 90 kHz): the median alone drifts half a unit a frame, enough to snap a short clip onto the
+    // wrong points.
+    let mut durs: Vec<u32> = t.samples.iter().map(|s| s.duration).collect();
+    durs.sort_unstable();
+    let Some(&median) = durs.get(durs.len() / 2) else { return };
+    let near: Vec<f64> = durs.iter().filter(|&&d| d.abs_diff(median) <= 1).map(|&d| f64::from(d)).collect();
+    let mean = near.iter().sum::<f64>() / near.len().max(1) as f64;
+    if mean <= 0.0 {
+        return;
+    }
+    let rate = FrameRate::from_f64(f64::from(t.timescale) / mean);
+    // one frame lasts `step_num / step_den` track units
+    let (step_num, step_den) = (i128::from(t.timescale) * i128::from(rate.den), i128::from(rate.num));
+    if step_num <= 0 || step_den <= 0 {
+        return;
+    }
+    // a sample's grid index and its new time
+    let snap = |pts: i64| -> Option<(i128, i64)> {
+        let off = i128::from(pts) - i128::from(first);
+        // the nearest grid index, then its grid point (both rounded half up)
+        let n = (2 * off * step_den + step_num).div_euclid(2 * step_num);
+        let at = i128::from(first) + (2 * n * step_num + step_den).div_euclid(2 * step_den);
+        let off_grid = (i128::from(pts) - at).abs();
+        if off_grid * 4 * step_den >= step_num {
+            return None;
+        }
+        Some((n, if off_grid <= 1 { pts } else { i64::try_from(at).ok()? }))
+    };
+    let Some(snapped) = t.samples.iter().map(|s| snap(s.pts)).collect::<Option<Vec<_>>>() else { return };
+    // Two pictures by one grid point: not a constant rate. Checked on the index, not the new time:
+    // one picture kept a unit after the point and another moved onto it would be distinct times in
+    // the wrong order.
+    let mut points: Vec<i128> = snapped.iter().map(|&(n, _)| n).collect();
+    points.sort_unstable();
+    points.dedup();
+    if points.len() != snapped.len() {
+        return;
+    }
+    for (s, (_, p)) in t.samples.iter_mut().zip(snapped) {
+        s.pts = p;
+    }
 }
 
 /// Start the file at its first picture when its video track has no edit list (#714). Without an
@@ -998,6 +1079,84 @@ mod tests {
         assert_eq!(pixfmt_label(&avc(244, high_sps(244, 3, 10), Vec::new())), "YUV 4:4:4 10-bit");
         // an unreadable SPS and no extension: unknown, not a guess
         assert_eq!(pixfmt_label(&avc(122, vec![0x67, 122], Vec::new())), "");
+        // the SPS outranks the extension: an avcC claiming 4:0:0 for a 4:2:0 stream labels 4:2:0 (#1959)
+        assert_eq!(pixfmt_label(&avc(100, high_sps(100, 1, 8), vec![0xFC, 0xF8, 0xF8, 0])), "YUV 4:2:0 8-bit");
+        // only without a readable SPS does the extension speak for itself
+        assert_eq!(pixfmt_label(&avc(100, vec![0x67, 100], vec![0xFC, 0xF8, 0xF8, 0])), "YUV 4:0:0 8-bit");
+    }
+
+    /// An HEVC Main SPS NAL unit (ITU-T H.265 §7.3.2.2) with the given chroma format and bit depth, 64×64.
+    fn hevc_sps(chroma: u32, bits: u32) -> Vec<u8> {
+        let mut w = filmcraft_bitstream::BitWriter::new();
+        w.write_bits(0, 4); // vps id
+        w.write_bits(0, 3); // max_sub_layers_minus1
+        w.write_bits(1, 1); // temporal_id_nesting
+        // profile_tier_level: Main, level 3.1
+        w.write_bits(0, 2);
+        w.write_bits(0, 1);
+        w.write_bits(1, 5);
+        w.write_bits(0x6000_0000, 32);
+        w.write_bits(0b1001, 4);
+        w.write_bits(0, 32);
+        w.write_bits(0, 11);
+        w.write_bits(0, 1);
+        w.write_bits(93, 8);
+        w.write_ue(0); // sps id
+        w.write_ue(chroma);
+        if chroma == 3 {
+            w.write_bit(false); // separate_colour_plane
+        }
+        w.write_ue(64);
+        w.write_ue(64);
+        w.write_bits(0, 1); // conformance window
+        w.write_ue(bits - 8); // luma
+        w.write_ue(bits - 8); // chroma
+        w.write_ue(4); // log2_max_poc_lsb_minus4
+        w.write_bits(1, 1); // sub_layer_ordering_info_present
+        w.write_ue(4);
+        w.write_ue(0);
+        w.write_ue(0);
+        w.write_ue(0); // min CB 8
+        w.write_ue(1); // CTB 16
+        w.write_ue(0); // min TB 4
+        w.write_ue(2); // max TB 16
+        w.write_ue(0);
+        w.write_ue(0);
+        w.write_bits(0, 1); // scaling lists
+        w.write_bits(0, 1); // amp
+        w.write_bits(0, 1); // sao
+        w.write_bits(0, 1); // pcm
+        w.write_ue(0); // num_short_term_ref_pic_sets
+        w.write_bits(0, 1); // long_term_ref_pics_present
+        w.write_bits(0, 1); // temporal mvp
+        w.write_bits(0, 1); // strong intra smoothing
+        w.write_bits(0, 1); // vui
+        w.write_bits(0, 1); // extensions
+        w.rbsp_trailing();
+        let mut nal = vec![33 << 1, 1];
+        nal.extend(filmcraft_bitstream::escape_rbsp(&w.finish()));
+        nal
+    }
+
+    /// The hvcC's own chroma/bit-depth fields can be left at 0 by a muxer: the SPS it carries says.
+    #[test]
+    fn hevc_pixel_format_prefers_the_sps_over_the_hvcc_fields() {
+        let with_sps = |chroma: u32, bits: u32, field_chroma: u8, field_bits: u8| {
+            let arrays = vec![filmcraft_isobmff::HevcNalArray { completeness: true, nal_type: 33, nalus: vec![hevc_sps(chroma, bits)] }];
+            CodecConfig::Hevc(filmcraft_isobmff::HevcConfig {
+                general_profile_idc: 1,
+                chroma_format_idc: field_chroma,
+                bit_depth_luma: field_bits,
+                arrays,
+                ..Default::default()
+            })
+        };
+        assert_eq!(pixfmt_label(&with_sps(1, 8, 0, 0)), "YUV 4:2:0 8-bit", "hvcC fields at 0, SPS 4:2:0");
+        assert_eq!(pixfmt_label(&with_sps(2, 10, 1, 8)), "YUV 4:2:2 10-bit", "the SPS outranks the fields");
+        assert_eq!(pixfmt_label(&with_sps(3, 12, 3, 12)), "YUV 4:4:4 12-bit");
+        // no SPS in the record: its fields
+        let bare = CodecConfig::Hevc(filmcraft_isobmff::HevcConfig { general_profile_idc: 1, chroma_format_idc: 1, bit_depth_luma: 10, ..Default::default() });
+        assert_eq!(pixfmt_label(&bare), "YUV 4:2:0 10-bit");
     }
 
     /// A one-frame 32×16 ProRes MOV with the given profile, chroma format and fourcc.

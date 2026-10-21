@@ -305,3 +305,58 @@ fn color_matte_dialog_picks_and_changes_the_color() {
     assert_eq!(d.call("ui.menu.invoke", json!({"id": "project.matteColor"}))["ok"], json!(false));
     assert!(!d.dialog_open());
 }
+
+#[test]
+fn reveal_in_finder_opens_an_imported_clip() {
+    let dir = std::env::temp_dir().join(format!("fc-ui-reveal-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("clip.png");
+    image::RgbaImage::from_pixel(8, 8, image::Rgba([10, 20, 30, 255])).save(&path).unwrap();
+    let mut d = Driver::new();
+    let item = d.exec("file.import", json!({"paths": [path.to_string_lossy()]}))["items"][0].as_u64().unwrap();
+    assert!(!d.app().session.is_enabled("file.reveal"));
+    d.exec("project.select", json!({"items": [item]}));
+    assert!(d.app().session.is_enabled("file.reveal"));
+    let r = d.ok("ui.menu.invoke", json!({"id": "file.reveal"}));
+    assert_eq!(r["paths"][0], path.to_string_lossy().as_ref());
+    assert_eq!(d.app().ui.extras.opened.last().map(String::as_str), Some(path.to_string_lossy().as_ref()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A project saved for the first time is listed at the top of Home's Recent list and of File ▸
+/// Open Recent, both of which reopen it; Clear Recent Files empties the list (#1461).
+#[test]
+fn saved_projects_are_listed_in_home_and_open_recent() {
+    let dir = std::env::temp_dir().join(format!("fc-ui-recent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("first cut.fcproj").to_string_lossy().to_string();
+    let b = dir.join("second cut.fcproj").to_string_lossy().to_string();
+    let mut d = Driver::new();
+    d.exec("file.saveAs", json!({"path": a}));
+    d.exec("file.newProject", json!({"name": "Second"}));
+    d.exec("file.saveAs", json!({"path": b}));
+    let menus = d.ok("ui.menu.list", json!({}));
+    let recent: Vec<&Value> = menus.as_array().unwrap().iter().filter(|m| m["path"] == json!(["File", "Open Recent"])).collect();
+    let labels: Vec<&str> = recent.iter().map(|m| m["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["second cut.fcproj", "first cut.fcproj", "Clear Recent Files"]);
+    assert_eq!(recent[0]["id"], "file.openRecent.0");
+    // File ▸ Open Recent reopens the older one, which moves to the top
+    d.menu("file.openRecent.1");
+    assert_eq!(d.app().session.path.as_deref(), Some(a.as_str()));
+    assert_eq!(d.app().session.prefs.general.recent_projects, [a.clone(), b.clone()]);
+    // Home lists them too, newest first, and a click opens one
+    d.click("header.home");
+    let rows = d.ok("ui.elements", json!({"prefix": "import.recent."}));
+    let rows: Vec<&str> = rows.as_array().unwrap().iter().map(|e| e["label"].as_str().unwrap()).collect();
+    assert_eq!(rows, ["first cut.fcproj", "second cut.fcproj"]);
+    d.click("import.recent.1");
+    assert_eq!(d.app().session.path.as_deref(), Some(b.as_str()));
+    // Clear Recent Files empties both lists
+    d.menu("file.clearRecent");
+    assert!(d.app().session.prefs.general.recent_projects.is_empty());
+    let menus = d.ok("ui.menu.list", json!({}));
+    let clear = menus.as_array().unwrap().iter().find(|m| m["id"] == "file.clearRecent").cloned().expect("Clear Recent Files");
+    assert_eq!(clear["enabled"], false);
+    assert!(!menus.as_array().unwrap().iter().any(|m| m["id"].as_str().is_some_and(|id| id.starts_with("file.openRecent."))));
+    let _ = std::fs::remove_dir_all(&dir);
+}

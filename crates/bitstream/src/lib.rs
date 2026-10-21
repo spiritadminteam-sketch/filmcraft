@@ -117,8 +117,8 @@ impl<'a> BitReader<'a> {
         Ok(())
     }
 
-    /// Unsigned Exp-Golomb `ue(v)`.
-    pub fn read_ue(&mut self) -> Result<u32> {
+    /// Raw Exp-Golomb codeNum, up to 32 leading zeros (so below 2^33).
+    fn read_code_num(&mut self) -> Result<u64> {
         let mut zeros = 0u32;
         while !self.read_bit()? {
             zeros += 1;
@@ -130,14 +130,20 @@ impl<'a> BitReader<'a> {
             return Ok(0);
         }
         let v = self.read_bits_u64(zeros)?;
-        let r = (1u64 << zeros) - 1 + v;
-        u32::try_from(r).map_err(|_| BitError::InvalidExpGolomb)
+        Ok((1u64 << zeros) - 1 + v)
+    }
+
+    /// Unsigned Exp-Golomb `ue(v)`.
+    pub fn read_ue(&mut self) -> Result<u32> {
+        u32::try_from(self.read_code_num()?).map_err(|_| BitError::InvalidExpGolomb)
     }
 
     /// Signed Exp-Golomb `se(v)`.
     pub fn read_se(&mut self) -> Result<i32> {
-        let k = self.read_ue()? as i64;
-        Ok(if k & 1 == 1 { ((k + 1) / 2) as i32 } else { -((k / 2) as i32) })
+        // codeNum 2^32 is -2^31, so the mapping is done before narrowing to 32 bits.
+        let k = self.read_code_num()? as i64;
+        let v = if k & 1 == 1 { (k + 1) / 2 } else { -(k / 2) };
+        i32::try_from(v).map_err(|_| BitError::InvalidExpGolomb)
     }
 
     /// Truncated Exp-Golomb `te(v)` with range `max`.
@@ -196,7 +202,11 @@ impl BitWriter {
         self.write_bits(b as u32, 1);
     }
     pub fn write_ue(&mut self, v: u32) {
-        let x = v as u64 + 1;
+        self.write_code_num(u64::from(v));
+    }
+    /// Exp-Golomb codeNum up to 2^32 (the code of `se(v)` -2^31).
+    fn write_code_num(&mut self, v: u64) {
+        let x = v + 1;
         let len = 64 - x.leading_zeros();
         let zeros = len - 1;
         for _ in 0..zeros {
@@ -210,8 +220,8 @@ impl BitWriter {
         }
     }
     pub fn write_se(&mut self, v: i32) {
-        let k = if v > 0 { (v as u32) * 2 - 1 } else { (-(v as i64) as u32) * 2 };
-        self.write_ue(k);
+        let m = u64::from(v.unsigned_abs()) * 2;
+        self.write_code_num(if v > 0 { m - 1 } else { m });
     }
     pub fn bit_len(&self) -> usize {
         self.buf.len() * 8 + self.nbits as usize
@@ -375,6 +385,41 @@ mod tests {
         for v in [0, 1, -1, 2, -2, 1000, -1000] {
             assert_eq!(r.read_se().unwrap(), v);
         }
+    }
+
+    #[test]
+    fn signed_exp_golomb_extremes_roundtrip() {
+        let vals = [0, 1, -1, i32::MAX, i32::MIN];
+        let mut w = BitWriter::new();
+        for v in vals {
+            w.write_se(v);
+        }
+        let b = w.finish();
+        let mut r = BitReader::new(&b);
+        for v in vals {
+            assert_eq!(r.read_se(), Ok(v));
+        }
+    }
+
+    #[test]
+    fn signed_exp_golomb_reads_minimum_from_spec_bits() {
+        // 32 zero bits, 1, then the 32-bit suffix 1: codeNum = 2^32 -> -2^31.
+        let bytes = [0, 0, 0, 0, 0x80, 0, 0, 0, 0x80];
+        assert_eq!(BitReader::new(&bytes).read_se(), Ok(i32::MIN));
+    }
+
+    #[test]
+    fn signed_exp_golomb_rejects_positive_overflow() {
+        // 32 zero bits, 1, then 32 zero bits: codeNum = 2^32 - 1 -> +2^31, not an i32.
+        let bytes = [0, 0, 0, 0, 0x80, 0, 0, 0, 0];
+        assert_eq!(BitReader::new(&bytes).read_se(), Err(BitError::InvalidExpGolomb));
+    }
+
+    #[test]
+    fn unsigned_exp_golomb_keeps_u32_range() {
+        // codeNum = 2^32 is a valid se(v) code but does not fit ue(v)'s u32.
+        let bytes = [0, 0, 0, 0, 0x80, 0, 0, 0, 0x80];
+        assert_eq!(BitReader::new(&bytes).read_ue(), Err(BitError::InvalidExpGolomb));
     }
 
     #[test]
