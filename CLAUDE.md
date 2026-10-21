@@ -1,28 +1,65 @@
-# FilmCraft — instructions for agents
+# Working rules for this repo
 
-FilmCraft is a clean-room, open-source, pure-Rust non-linear video editor targeting Adobe Premiere Pro parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../photocraft` (Photoshop), `../pdfcraft` (Acrobat) and `../vectorcraft` (Illustrator; formerly DrawCraft), with the same conventions.
+Goal: keep credit/token usage low on a large codebase. Read less, read targeted, and never sacrifice correctness to save tokens.
 
-## Start every session here
-`plan/` is maintainer-local (gitignored, not in the repo). Each step names the public equivalent to use if you don't have it.
-1. Read `plan/STATUS.md` (current milestone, next unchecked task, blockers). Public: [`ROADMAP.md`](ROADMAP.md), then [`docs/gaps.md`](docs/gaps.md) (ranked shortfalls) and [`docs/roadmap.md`](docs/roadmap.md) (current focus).
-2. Read the task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README/docs of the crate you touch. Public: [`docs/architecture.md`](docs/architecture.md), [`docs/contributing.md`](docs/contributing.md), [`docs/testing.md`](docs/testing.md). Visual/behaviour reference: `plan/premiere/` (local only, never committed).
-3. Follow the autonomous operation protocol (`plan/execution-plan.md` §7; public summary: [`docs/agents.md`](docs/agents.md) §5–7). Don't stop to ask unless it lists the decision as the user's.
+## 1. Section annotations (the code map)
 
-## Non-negotiables
-**Read [`AGENTS.md`](AGENTS.md) first; its rules override everything here.**
-- **Never crash** ([`AGENTS.md`](AGENTS.md) §0, standard: [`craftrules/standards/never-crash.md`](https://github.com/storytold/craftrules/blob/main/standards/never-crash.md)). People depend on FilmCraft; a crash loses their work, so this outranks feature work. No `unwrap`/`expect`/`panic!`/`unreachable!`/`todo!`/`unimplemented!` or `unsafe` outside tests: return `Result<T, E>` and propagate with `?` (`ok_or`, `let … else`, `if let`). Treat every number from media, project files, presets or CLI/MCP/control params as hostile: `get()` instead of `[i]`, checked/saturating math, no division by possibly-zero values, capped allocations, bounded recursion. `lock().unwrap_or_else(PoisonError::into_inner)`; background jobs run under `catch_unwind`. The panic hook + UI `catch_unwind` (`crates/ui-egui/src/crash.rs`) are the last-resort guard, not a licence. Every crash fix gets a regression test that panicked before. In particular (§1): never use Adobe iconography, images or any other Adobe asset. Every asset must be openly licensed (OSS / public domain / Creative Commons, or original work by a contributor) and must have a `<file>.attribution` sidecar plus an entry in `ATTRIBUTION.md`. `cargo xtask assets` enforces this.
-- **Fonts** live in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), never in this repo (no new font files here; [`AGENTS.md`](AGENTS.md) §1.9, standard: [`craftrules/standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md)). Build with them: `git clone https://github.com/storytold/craft-fonts ../craft-fonts && CRAFT_FONTS_DIR="$PWD/../craft-fonts" cargo run -p filmcraft` (`crates/text/build.rs` embeds them as `filmcraft_text::fonts::CRAFT_FONTS`, used for Japanese in the UI and titles). Unset, `CRAFT_FONTS` is empty and everything must still build, test and run; never add craft-fonts to a `Cargo.toml`. Tests on its glyphs skip when it is empty, so run the gates with and without `CRAFT_FONTS_DIR` when you touch fonts.
-- **Clean-room.** Never read/disassemble anything inside Adobe app bundles (names/listings only). Never copy Adobe icons, presets, LUTs, fonts. Never copy GPL/LGPL/AGPL code (FFmpeg, x264, x265, MLT, Kdenlive, Shotcut, Olive, LAME…). ffmpeg/ffprobe run only as external test oracles / fixture generators — never linked or shipped.
-- **Pure Rust** in the product. OS media APIs only via Rust bindings in `crates/platform` (hardware decoding; the one crate allowed `unsafe`, see `AGENTS.md` §0.3 and `docs/adr/0001-platform-ffi.md`), optional, behind traits, with our decoders as the fallback.
-- **Layering** ([`docs/architecture.md`](docs/architecture.md) §1, enforced by `cargo xtask layers`): nothing below L5 depends on egui/eframe/winit/rfd/cpal. L0 codec/container crates depend only on `filmcraft-bitstream`.
-- **Exact time:** all time is `filmcraft_time::Tick` (254 016 000 000/s). Never use f64 seconds for edit math.
-- **Everything is a command** (`crates/engine`): id, label, menu path, shortcut, params, enabled(), run(). UI, CLI, control channel and MCP all dispatch by id.
-- **Everything is agent-drivable:** every interactive widget registers an automation id; UI state is serde so the control channel can read/set it.
-- **Quality gates** before every commit: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo xtask layers`, `cargo xtask assets`, `cargo xtask wasm` (checks L0–L4 crates). `cargo xtask ci` runs them all.
-- **Commits:** one task id per commit (`M2.4: CABAC residual decoding`). Only green states. End messages with the attribution line required by the environment.
+- Every ~50 lines of code, add a one-line section comment using the marker `@@`:
+  - JS/TS/C/C++/Swift: `// @@ Caption track: re-times clips to word timestamps`
+  - Python/shell: `# @@ Export: builds ffmpeg args from sequence settings`
+- One line, plain English, says *what the section does* (not how). Max ~15 words.
+- Start every file with a header annotation: `@@ FILE: <purpose of this file in one line>`.
+- Put an annotation at natural boundaries (function/class/block), not mechanically at line 50.
+- When you change a section, update its `@@` line in the same edit. A stale annotation is a bug.
+- When you add new code, add its annotation. When you touch an un-annotated file, annotate the parts you work on.
 
-## Running and looking at the app
-- `cargo run -p filmcraft -- --control 9876` opens the desktop app with the JSON-lines control server (see `docs/control-protocol.md`).
-- For UI work, **look at the result**: drive via the control channel and take `ui.screenshot`, compare with `plan/premiere/screenshots/` (maintainer-local; see [`docs/agents.md`](docs/agents.md) §3).
-- Parallel agents: separate git worktrees and `CARGO_TARGET_DIR=target/agent-<name>`; keep every `Cargo.toml` valid at all times (the `crates/*` glob means one broken manifest breaks everyone).
-- Test fixtures: generate with ffmpeg into `target/fixtures/` (never commit media). See [`docs/testing.md`](docs/testing.md).
+## 2. How to find code (cheap first)
+
+Follow this order. Stop as soon as you have what you need.
+
+1. Check `CODEMAP.md` (if present) to pick the right file.
+2. Search annotations, not code: `grep -rn "@@" <dir>` or `grep -n "@@" <file>`.
+3. Read **only** the section you need, using line ranges (offset/limit). Do not open whole large files.
+4. Only search raw code (function names, symbols) if annotations don't point you to it.
+
+## 3. How to edit (correctness rules)
+
+- Annotations are for **locating** code. Always read the actual lines before editing them. Never write an edit based on the annotation alone.
+- If an annotation doesn't match the code under it, trust the code, fix the annotation, and mention it in one line.
+- Read enough surrounding context to keep the edit consistent (imports, types, callers you're changing).
+
+## 4. Token-saving habits
+
+- Don't re-read a file you just read or just edited; use what you already have.
+- Don't paste large files, logs or build output into the conversation. Pipe through `tail -n 50`, `grep`, or `head`.
+- Run tests/builds with quiet flags and only show failures.
+- Keep plans and status updates short: a few bullets, no recap of finished steps.
+- Don't explore the whole repo "to understand it". Use the code map and annotations.
+- Prefer small, focused edits over rewriting whole files.
+- One task per session where possible (e.g. building a feature vs. editing a video vs. adding a plugin). Start a fresh session when switching tasks instead of carrying a huge context.
+
+## 5. CODEMAP.md
+
+- Maintain `CODEMAP.md` at the repo root: one line per important file or folder, `path — what it does`.
+- Update it when you add, move or delete a file. Keep it short; it's an index, not documentation.
+- If it doesn't exist yet, create it the first time you need to orient yourself, from the `@@ FILE:` headers.
+
+## 6. Exports and renders
+
+- Never export, render or encode final videos (shorts or long-form) unless I explicitly ask in that message. Exports burn a lot of credits; I export manually.
+- When an edit is ready, stop and say "Ready to export: <sequence name>" in one line.
+- For checking your work, use a single-frame render or a short preview, never a full export.
+
+## 7. Finishing a task
+
+- When a task is done (a video is finished, a feature works), say so in one line and suggest running `/wrapup`.
+- Don't keep finished work (old edits, old shorts, old export tests) in play. Treat finished projects as closed unless I reopen them.
+- At the start of a session, read `SESSION_NOTES.md` if it exists, then continue from it. Don't re-explore what it already covers.
+
+## Compact instructions
+
+When compacting, keep: the current task, open bugs, decisions made, files changed and why. Drop: finished videos and shorts, export/render output, logs, tool output, and anything already recorded in `SESSION_NOTES.md`.
+
+## 8. Keep this file lean
+
+This file is loaded into every session, so every line here costs tokens every time. Add rules only when they prevent a repeated mistake. Put long docs elsewhere and link to them.
