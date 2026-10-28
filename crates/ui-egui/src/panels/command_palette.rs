@@ -117,7 +117,7 @@ pub fn entries(app: &FilmcraftApp) -> Vec<Entry> {
         }
         out.push(Entry {
             label: c.label.trim_end_matches('…').to_string(),
-            detail: c.menu.join(" ▸ "),
+            detail: c.menu.join(" › "),
             shortcut: app.session.shortcuts.primary(c.id),
             action: Action::Command(c.id.to_string()),
         });
@@ -128,7 +128,7 @@ pub fn entries(app: &FilmcraftApp) -> Vec<Entry> {
         }
         out.push(Entry {
             label: c.label.trim_end_matches('…').to_string(),
-            detail: if c.menu.is_empty() { "Keyboard".into() } else { c.menu.join(" ▸ ") },
+            detail: if c.menu.is_empty() { "Keyboard".into() } else { c.menu.join(" › ") },
             shortcut: app.session.shortcuts.primary(c.id),
             action: Action::Command(c.id.to_string()),
         });

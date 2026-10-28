@@ -65,10 +65,11 @@ impl ScrubAudio {
 impl FilmcraftApp {
     /// Once a frame: play a grain when the playhead moved under a held mouse button.
     pub(crate) fn scrub_audio(&mut self, ctx: &egui::Context) {
-        let (now, down, arrow) = ctx.input(|i| {
+        let (down, arrow) = ctx.input(|i| {
             let arrow = [egui::Key::ArrowLeft, egui::Key::ArrowRight].into_iter().any(|k| i.key_pressed(k) || i.key_down(k));
-            (i.time, i.pointer.any_down(), arrow)
+            (i.pointer.any_down(), arrow)
         });
+        let now = self.now();
         // typing in a field moves its cursor, not the playhead
         if arrow && !ctx.text_edit_focused() {
             self.scrub.last_key = Some(now);
@@ -78,7 +79,7 @@ impl FilmcraftApp {
         }
     }
 
-    /// [`FilmcraftApp::scrub_audio`] with the clock and the button state given. Returns whether
+    /// `FilmcraftApp::scrub_audio` with the clock and the button state given. Returns whether
     /// the scrub stream is still open.
     pub fn scrub_tick(&mut self, now: f64, down: bool) -> bool {
         let ph = self.session.playhead();

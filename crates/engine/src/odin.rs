@@ -430,7 +430,7 @@ fn place_preset(
                 };
                 let range = TimeRange::new(c.source_in, c.duration);
                 let (vdest, adest) = if is_video { (Some(*tid), None) } else { (None, Some(*tid)) };
-                match crate::commands::place_item(s, item, range, c.start + offset, vdest, adest, false, label, None) {
+                match crate::commands::place_item(s, crate::commands::ItemPlacement { item, range, at: c.start + offset, vdest, adest, insert: false, label, audio_split: None }) {
                     Ok(ids) => {
                         if let Some(&clip) = ids.first() {
                             dress(s, clip, c, center, label)?;
@@ -469,7 +469,7 @@ fn insert_media(s: &mut Session, p: &Value) -> Result<Value> {
         let (video, _) = s.project.source_streams(item);
         let (a, b) = (at, at + range.duration);
         let (vdest, adest) = if video { (video_tracks(s, 1, a, b)?.first().copied(), None) } else { (None, audio_tracks(s, 1, a, b)?.first().copied()) };
-        crate::commands::place_item(s, item, range, at, vdest, adest, false, &label, None)
+        crate::commands::place_item(s, crate::commands::ItemPlacement { item, range, at, vdest, adest, insert: false, label: &label, audio_split: None })
     })();
     crate::clip_ops::collapse_history(s, n0, &label);
     let clips = result?;
