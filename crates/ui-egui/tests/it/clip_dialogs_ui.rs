@@ -466,3 +466,42 @@ fn clip_context_menu_adds_a_marker_at_the_playhead_with_one_undo() {
         assert_eq!(serde_json::to_value(&*d.app().session.project).unwrap(), serde_json::to_value(&*after).unwrap());
     }
 }
+
+/// Clip Mismatch Warning: the first clip edited into an empty sequence that doesn't match it asks
+/// first. Cancel makes no edit, Keep makes the edit and leaves the sequence as it is, Change
+/// matches the sequence to the clip and then makes the edit.
+#[test]
+fn clip_mismatch_warning_asks_before_the_first_clip() {
+    let mut d = Driver::new();
+    let ocean = d.item_named("Ocean_Sunset.mp4");
+    d.exec("file.newSequence", json!({"name": "Mismatch", "width": 640, "height": 360, "fps": 50}));
+    d.exec("source.open", json!({"item": ocean}));
+    let clips = |d: &mut Driver| d.app().session.active_sequence().unwrap().video_tracks[0].items.len();
+    let size = |d: &mut Driver| {
+        let s = &d.app().session.active_sequence().unwrap().settings;
+        (s.width, s.height, s.frame_rate)
+    };
+    let before = size(&mut d);
+
+    d.menu("source.overwrite");
+    assert!(d.has("clipMismatch.change") && d.has("clipMismatch.keep"), "the warning asks first");
+    assert_eq!(clips(&mut d), 0, "nothing is placed before an answer");
+    d.click("clipMismatch.cancel");
+    assert!(!d.has("clipMismatch.keep"));
+    assert_eq!(clips(&mut d), 0, "Cancel makes no edit");
+
+    d.menu("source.overwrite");
+    d.click("clipMismatch.keep");
+    assert_eq!(clips(&mut d), 1, "Keep makes the edit");
+    assert_eq!(size(&mut d), before, "Keep leaves the sequence settings alone");
+
+    d.exec("edit.undo", json!({}));
+    d.menu("source.overwrite");
+    d.click("clipMismatch.change");
+    assert_eq!(clips(&mut d), 1);
+    let info = d.app().session.project.item(filmcraft_engine::project::ItemId(ocean)).unwrap().as_media().unwrap().info.video.clone().unwrap();
+    assert_eq!(size(&mut d), (info.width, info.height, info.frame_rate), "Change matches the clip");
+    // with clips in the sequence it never asks again
+    d.menu("source.overwrite");
+    assert!(!d.has("clipMismatch.keep"));
+}

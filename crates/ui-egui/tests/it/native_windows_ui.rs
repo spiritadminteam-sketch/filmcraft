@@ -67,6 +67,8 @@ impl Driver {
         let mut s = Session::default();
         s.execute("file.openDemoProject", json!({})).unwrap();
         s.execute("file.newSequence", json!({"name": "Native", "width": 1280, "height": 720, "fps": 24})).unwrap();
+        // the drop is under test, not the Clip Mismatch Warning
+        s.prefs.timeline.clip_mismatch_warning = false;
         s.execute("source.open", json!({"item": source})).unwrap();
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(s).with_control(rx);

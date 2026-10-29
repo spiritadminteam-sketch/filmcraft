@@ -296,6 +296,10 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
         }
         return r;
     }
+    // the first clip into an empty sequence that doesn't match it asks first (Clip Mismatch Warning)
+    if crate::panels::clip_mismatch::intercept(app, ctx, id, &params) {
+        return Ok(serde_json::json!({"dialog": "clipMismatch"}));
+    }
     if let Some(r) = crate::panels::settings::route(app, id) {
         return r;
     }

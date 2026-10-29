@@ -898,9 +898,7 @@ fn drop_targets(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layou
                 params["video"] = json!(source.video);
                 params["audio"] = json!(source.audio);
             }
-            if let Err(e) = app.session.execute("timeline.place", params) {
-                app.ui.status = e.to_string();
-            }
+            crate::panels::clip_mismatch::execute(app, &ctx, "timeline.place", params);
             crate::panels::clear_drag(ui);
         }
     }
@@ -945,9 +943,7 @@ fn drop_targets(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layou
             // one command, one undo step: the files go end to end from the drop point
             let ids: Vec<u64> = items.iter().map(|i| i.0).collect();
             let params = json!({"items": ids, "track": vt, "audioTrack": at, "time": start.0, "insert": false});
-            if let Err(e) = app.session.execute("timeline.place", params) {
-                app.ui.status = e.to_string();
-            }
+            crate::panels::clip_mismatch::execute(app, &ctx, "timeline.place", params);
         }
     }
     // preview of OS files being dragged over the Timeline: a placeholder where the drop would start

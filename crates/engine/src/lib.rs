@@ -13,6 +13,7 @@
 pub mod aaf_omf;
 pub mod autosave;
 pub mod captions;
+pub mod clip_mismatch;
 pub mod clip_ops;
 pub mod color;
 pub mod commands;

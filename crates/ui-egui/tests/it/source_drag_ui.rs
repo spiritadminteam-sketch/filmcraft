@@ -16,6 +16,8 @@ fn harness(item: u64) -> Harness<'static, FilmcraftApp> {
     let mut s = Session::default();
     s.execute("file.openDemoProject", json!({})).unwrap();
     s.execute("file.newSequence", json!({"name":"Drop test","width":1280,"height":720,"fps":24})).unwrap();
+    // these tests are about the drag, not the Clip Mismatch Warning
+    s.prefs.timeline.clip_mismatch_warning = false;
     s.execute("source.open", json!({"item":item})).unwrap();
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).build_eframe(move |_cc| FilmcraftApp::new(s));
     for _ in 0..4 {
