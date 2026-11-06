@@ -81,7 +81,8 @@ impl Label {
             Label::Yellow => [0x6e, 0x66, 0x28],
         }
     }
-    /// Marker colours (Markers panel chips).
+    /// Marker colours: brighter than the clip labels, as Premiere draws markers; Lavender is the
+    /// White marker.
     pub fn marker_rgb(self) -> [u8; 3] {
         match self {
             Label::Rose | Label::Magenta => [0xc1, 0x3c, 0x3d],
@@ -94,6 +95,11 @@ impl Label {
             Label::Teal | Label::Caribbean => [0x72, 0xf0, 0xd7],
             _ => [0x75, 0x85, 0x42],
         }
+    }
+    /// Alternate user-facing color names resolve to presets, not additional swatches.
+    pub const COLOR_ALIASES: [(&'static str, Label); 4] = [("Red", Label::Rose), ("Orange", Label::Mango), ("Cyan", Label::Teal), ("Pink", Label::Magenta)];
+    pub fn from_color_name(name: &str) -> Option<Label> {
+        Self::from_name(name).or_else(|| Self::COLOR_ALIASES.iter().find(|(alias, _)| alias.eq_ignore_ascii_case(name)).map(|(_, label)| *label))
     }
     /// The name of this colour as a marker colour: Lavender is the White marker.
     pub fn marker_name(self) -> &'static str {

@@ -47,17 +47,17 @@ use interact::{interact, move_transition_preview, preview_drag};
 use layout::new_track_at;
 pub(crate) use layout::reveal_playhead;
 use layout::video_row_tops;
-pub use layout::{Layout, Row, max_scroll, scroll_to_reveal, timeline_extent, zoom_about};
+pub use layout::{Layout, Row, max_scroll, min_pps, scroll_to_reveal, timeline_extent, zoom_about};
 #[cfg(test)]
 pub(crate) use menus::{CLIP_MENU, EDIT_POINT_TYPES};
 use ruler::draw_top;
 pub use ruler::ruler_steps;
 use scrollbars::{vertical_scrollbar, zoom_scrollbar};
-pub(super) use snap::snap;
 pub use snap::{hit_json, locate};
+pub(super) use snap::{snap, snap_caption};
 pub(crate) use waveforms::request_peaks;
 #[cfg(test)]
-use waveforms::{source_peaks, waveform_display_gain};
+use waveforms::{source_peaks, waveform_display_gain, waveform_zone_height};
 
 const TOP_H: f32 = 58.0; // timecode + toolbar (left) / ruler (right)
 const RULER_H: f32 = 44.0;
@@ -150,6 +150,22 @@ pub struct Pressed {
     /// The time under the pointer.
     pub tick: Tick,
     pub grab: Grab,
+    /// The vertical scrolls when the button went down (a wheel turn before the drag starts must not move a box's corner).
+    pub v_scroll: f32,
+    pub a_scroll: f32,
+}
+
+/// Where a box selection began, in Timeline content coordinates: the time under the pointer, and
+/// its y with the vertical scroll it was pressed at. Scrolling (wheel, auto-scroll, the bars)
+/// then moves the corner with the clips rather than leaving it at its screen position (#3563).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MarqueeAnchor {
+    pub t: Tick,
+    pub y: f32,
+    /// The scroll of the tracks it was pressed over: `v_scroll` for the video tracks, `a_scroll` for the audio tracks.
+    pub scroll: f32,
+    /// Pressed over the video tracks; the audio tracks scroll on their own.
+    pub video: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -241,15 +257,19 @@ pub enum Drag {
         start: Tick,
         end: Tick,
     },
+    /// The Timeline dragged by the middle button or the Hand tool: sideways in time, and up and down
+    /// the half it began in (`audio`: the audio tracks below the divider, else the video tracks).
     Pan {
         last: Pos2,
         start_scroll: f64,
         start_v: f32,
+        audio: bool,
+        start_a: f32,
     },
     /// Box selection, shown live: `before` is the selection when the drag began, which Shift or
     /// Ctrl (`add`) keep; the release commits one `timeline.select`.
     Marquee {
-        start: Pos2,
+        start: MarqueeAnchor,
         before: Vec<ClipId>,
         add: bool,
         individual: bool,
@@ -329,7 +349,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         let rect = Rect::from_min_max(pos2(content.min.x, top), pos2(content.max.x, top + ah));
         rows.push(Row { track: tr.id, kind: TrackKind::Audio, index: i, rect, lane: app.ui.timeline.track_lanes.contains_key(&tr.id.0) });
     }
-    let layout = Layout { content, ruler, rows: rows.clone(), pps, scroll, split_y };
+    let (v_scroll, a_scroll) = (app.ui.timeline.v_scroll, app.ui.timeline.a_scroll);
+    let layout = Layout { content, ruler, rows: rows.clone(), pps, scroll, split_y, v_scroll, a_scroll };
     app.tl.layout = Some(layout.clone());
 
     // ---- backgrounds
@@ -402,13 +423,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let master = Rect::from_min_max(pos2(rect.min.x, tracks_area.max.y - MASTER_H), pos2(content.max.x, tracks_area.max.y));
     painter.rect_filled(master, 0.0, t.tl_header_bg);
     painter.text(pos2(rect.min.x + 44.0, master.center().y), Align2::LEFT_CENTER, tl!("Mix"), Tokens::ui(11.5), t.text);
-    painter.text(
-        pos2(rect.min.x + header_w - 12.0, master.center().y),
-        Align2::RIGHT_CENTER,
-        format!("{:.1}", seq.master_volume_db),
-        Tokens::ui(11.5),
-        t.hot_text,
-    );
+    mix_volume(app, ui, seq, Rect::from_min_max(pos2(rect.min.x + header_w - 72.0, master.min.y + 6.0), pos2(rect.min.x + header_w - 8.0, master.max.y - 6.0)));
 
     // ---- caption tracks
     if cap_n > 0 {
@@ -432,14 +447,16 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 
     // ---- playhead
-    let ph = app.session.playhead();
+    let ph = app.shown_playhead();
     let px = layout.x_of(ph);
     if px >= content.min.x - 1.0 && px <= content.max.x + 1.0 {
         // a short head on the tick row, as in Effect Controls, so it leaves the markers and timecodes clear
         let (top, tip) = (ruler.max.y - 13.0, ruler.max.y);
         let head = [pos2(px - 5.0, top), pos2(px + 5.0, top), pos2(px + 5.0, tip - 5.0), pos2(px, tip), pos2(px - 5.0, tip - 5.0)];
         painter.add(egui::Shape::convex_polygon(head.to_vec(), t.playhead, Stroke::NONE));
-        painter.line_segment([pos2(px, tip), pos2(px, content.max.y)], Stroke::new(1.0, t.playhead));
+        // a path, not a line segment: egui rounds line segments to whole pixels, so while playing
+        // the line would move in uneven pixel steps and part from its head
+        painter.add(egui::Shape::line(vec![pos2(px, tip), pos2(px, content.max.y)], Stroke::new(1.0, t.playhead)));
     }
     // snap indicator
     if let Some(sx) = app.tl.snap_x.take() {
@@ -507,11 +524,15 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             v.fit_empty = None;
         }
         if v.fit_pending && content.width() > 50.0 {
-            v.target_pps = (content.width() as f64 * 0.94 / dur_s).clamp(0.05, 24_000.0);
+            v.target_pps = (content.width() as f64 * 0.94 / dur_s).clamp(min_pps(seq.duration().seconds(), content.width()), 24_000.0);
             v.target_scroll = 0.0;
             v.fit_pending = false;
             v.fit_empty = empty.then_some(v.target_pps);
         }
+        // however the zoom was set (wheel, keys, the bar, a script), zooming out stops at the extent
+        let floor = min_pps(seq.duration().seconds(), content.width());
+        v.target_pps = v.target_pps.max(floor);
+        v.pps = v.pps.max(floor);
         // eased, or in one step with Settings ▸ Appearance ▸ animations off (#2325)
         let k = if app.session.prefs.appearance.animations { 1.0 - (-dt * 20.0).exp() } else { 1.0 };
         let zooming = (v.pps - v.target_pps).abs() / v.target_pps > 0.001;
@@ -688,6 +709,7 @@ fn draw_clips(
                 if volume_line {
                     super::timeline_volume::paint(&p, body, it);
                 }
+                app.auto.add(&format!("timeline.clip.{}", it.id.0), body.intersect(content), &it.name);
             }
         }
         for (cid, (start, dur, mt)) in &copies {
@@ -718,6 +740,18 @@ fn paint_track_edits(
     t: Tokens,
     copying: bool,
 ) {
+    // transitions a clip drag carries, keyed by the row they land on: a carried transition draws
+    // where the drop leaves it — also when that is another track, so a fade dragged from V1 to V2
+    // previews on V2 instead of vanishing until the release. Each row keeps its own carried ones
+    // at home (a copy's originals) and adds the ones landing on it.
+    let mut carried_transitions: HashMap<TrackId, Vec<(&filmcraft_project::Transition, Tick, Tick)>> = HashMap::new();
+    for t in seq.all_tracks() {
+        for trn in &t.transitions {
+            if let Some((s, e, dest)) = move_transition_preview(app, seq, trn) {
+                carried_transitions.entry(dest).or_default().push((trn, s, e));
+            }
+        }
+    }
     for r in rows {
         let Some(tr) = seq.track(r.track) else { continue };
         let clip = if r.kind == TrackKind::Video { vclip } else { aclip };
@@ -741,8 +775,10 @@ fn paint_track_edits(
         super::trim_monitor::paint_edit_points(app, &p, seq, tr, r, layout);
         // transitions (one being dragged where the drag puts it; the selected ones outlined). A
         // clip drag also shows where the drop will carry its transitions (those whose clips all
-        // move to one track by one offset): a plain move draws them on their destination track
-        // right away, a copy adds a ghost beside the copies while the originals stay at home.
+        // move to one track by one offset): a carried one draws where it lands — its own row or
+        // another — right away, a copy adds a ghost beside the copies while the originals stay
+        // at home.
+        let mut draws: Vec<(&filmcraft_project::Transition, Tick, Tick, bool)> = Vec::new();
         for trn in &tr.transitions {
             let carried = move_transition_preview(app, seq, trn);
             // the transition's home span (a transition dragged by an end still takes over)
@@ -750,27 +786,30 @@ fn paint_track_edits(
                 Some(Drag::Transition { id, start, duration, .. }) if *id == trn.id => (*start, *start + *duration),
                 _ => (trn.start, trn.end()),
             };
-            // (start, end, is the copy's ghost)
-            let show: Vec<(Tick, Tick, bool)> = match (carried, copying) {
-                (Some((s, e, dest)), false) if dest == r.track => vec![(s, e, false)],
-                (Some((s, e, dest)), true) if dest == r.track => vec![(start, end, false), (s, e, true)],
-                (Some(_), false) => Vec::new(), // drawn on its destination row
-                _ => vec![(start, end, false)], // at home: not carried, or a copy's original
-            };
-            for (start, end, ghost) in show {
-                let x0 = layout.x_of(start);
-                let x1 = layout.x_of(end);
-                let tr_rect = Rect::from_min_max(pos2(x0, r.rect.min.y + 17.0), pos2(x1, r.rect.max.y - 1.0));
-                let selected = app.session.state.transition_selection.contains(&trn.id);
-                draw_transition(&p, tr_rect, trn, ghost || selected, &t);
-                let suffix = if ghost { ".copy" } else { "" };
-                app.auto.add(&format!("timeline.transition.{}{}", trn.id.0, suffix), tr_rect, &trn.effect.effect);
-                // its ends, for dragging the duration (the same zones as the hit test)
-                let zone = super::timeline_hit::EDGE_PX.min(tr_rect.width() / 3.0);
-                if !ghost {
-                    app.auto.add(&format!("timeline.transition.{}.in", trn.id.0), Rect::from_min_max(tr_rect.min, pos2(x0 + zone, tr_rect.max.y)), "start");
-                    app.auto.add(&format!("timeline.transition.{}.out", trn.id.0), Rect::from_min_max(pos2(x1 - zone, tr_rect.min.y), tr_rect.max), "end");
-                }
+            // (start, end, is the copy's ghost): a plain move's carried transition draws where
+            // the drop leaves it (appended below), a copy keeps the original at home, and one
+            // that is not carried stays on its cut
+            if carried.is_some() && !copying {
+                continue;
+            }
+            draws.push((trn, start, end, false));
+        }
+        for (trn, s, e) in carried_transitions.get(&r.track).into_iter().flatten() {
+            draws.push((trn, *s, *e, copying));
+        }
+        for (trn, start, end, ghost) in draws {
+            let x0 = layout.x_of(start);
+            let x1 = layout.x_of(end);
+            let tr_rect = Rect::from_min_max(pos2(x0, super::timeline_hit::transition_top(r.rect)), pos2(x1, r.rect.max.y - 1.0));
+            let selected = app.session.state.transition_selection.contains(&trn.id);
+            draw_transition(&p, tr_rect, trn, ghost || selected, &t);
+            let suffix = if ghost { ".copy" } else { "" };
+            app.auto.add(&format!("timeline.transition.{}{}", trn.id.0, suffix), tr_rect, &trn.effect.effect);
+            // its ends, for dragging the duration (the same zones as the hit test)
+            let zone = super::timeline_hit::EDGE_PX.min(tr_rect.width() / 3.0);
+            if !ghost {
+                app.auto.add(&format!("timeline.transition.{}.in", trn.id.0), Rect::from_min_max(tr_rect.min, pos2(x0 + zone, tr_rect.max.y)), "start");
+                app.auto.add(&format!("timeline.transition.{}.out", trn.id.0), Rect::from_min_max(pos2(x1 - zone, tr_rect.min.y), tr_rect.max), "end");
             }
         }
         if tr.locked {
@@ -781,6 +820,36 @@ fn paint_track_edits(
                 x += 8.0;
             }
         }
+    }
+}
+
+/// The Mix track header's level (#3765): the Mix fader at the playhead (its automation, or a
+/// control held in the Audio Track Mixer), as hot text to drag or type, as on an audio track.
+/// Changes go through `mixer.setValue`, so automation is written where the Mix fader has it; the
+/// changes of one press are one undo step, a typed value its own.
+fn mix_volume(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, r: Rect) {
+    use filmcraft_project::mixer::{FADER_MAX_DB, FADER_MIN_DB, LANE_VOLUME, MASTER_STRIP};
+    let now = app.session.playhead();
+    let db = app.session.previews.live.get(MASTER_STRIP, LANE_VOLUME).map(|o| o.value).unwrap_or_else(|| seq.master_strip().lane_value(LANE_VOLUME, now));
+    let mut vui = ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::right_to_left(egui::Align::Center)).id_salt("timeline-mix"));
+    let (resp, nv) = crate::widgets::hot_number(
+        &mut vui,
+        tl!("Mix"),
+        egui::Id::unique("timeline-mix-volume"),
+        db.max(FADER_MIN_DB),
+        crate::widgets::HotNumberOptions::new(0.1, (FADER_MIN_DB, FADER_MAX_DB), 1, "", &app.tokens),
+    );
+    app.auto.add("timeline.mix.volume", resp.rect, &format!("{db:.1}"));
+    // as the Audio Track Mixer's fader: a drag holds the control and lets go when it ends (one
+    // undo step, or one gesture of an automation pass); a typed value is set at once
+    let (cmd, p) = match nv {
+        Some(v) if resp.dragged() => ("mixer.touch", json!({"strip": "Mix", "lane": LANE_VOLUME, "value": v, "time": now.0})),
+        Some(v) => ("mixer.setValue", json!({"strip": "Mix", "lane": LANE_VOLUME, "value": v})),
+        None if resp.drag_stopped() => ("mixer.release", json!({"strip": "Mix", "lane": LANE_VOLUME, "time": now.0})),
+        None => return,
+    };
+    if let Err(e) = app.session.execute(cmd, p) {
+        app.ui.status = e.to_string();
     }
 }
 
@@ -944,6 +1013,79 @@ mod trim_preview_tests {
     }
 }
 
+/// #1424: dragging a clip edge must not squeeze the waveform into the new clip width. The render
+/// loop builds each clip's `body` rect from the drag preview and maps waveform pixels to media
+/// time through the item the preview chose (the edited item when there is one, the original
+/// otherwise). A drag whose preview changes only the geometry while the waveform still maps
+/// through the original item squeezes the whole waveform into the shorter body during the drag;
+/// it only corrects itself when the drag commits.
+#[cfg(test)]
+mod waveform_drag_anchor_tests {
+    use super::*;
+
+    /// The waveform's pixel-to-media scale (see `draw_waveform`): pixel `x` of `body` maps to
+    /// `it.start + it.duration * f`, so the waveform shows `it.duration / body.width()` media
+    /// ticks per pixel. Compression during a drag is exactly this scale changing: the same media
+    /// gets squeezed into (or stretched across) the previewed width.
+    fn media_ticks_per_pixel(body: &Rect, it: &TrackItem) -> f64 {
+        it.duration.0 as f64 / body.width().max(1.0) as f64
+    }
+
+    fn layout() -> Layout {
+        Layout {
+            content: Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 400.0)),
+            ruler: Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 20.0)),
+            rows: Vec::new(),
+            pps: 100.0,
+            scroll: 0.0,
+            split_y: 0.0,
+            v_scroll: 0.0,
+            a_scroll: 0.0,
+        }
+    }
+
+    /// The (body, item) pair the render loop would use for `id` with the app's current drag.
+    fn shown(app: &FilmcraftApp, seq: &Sequence, id: ClipId) -> (Rect, TrackItem) {
+        let (mut out, mut edited) = (HashMap::new(), HashMap::new());
+        preview_drag(app, seq, &mut out, &mut edited);
+        let original = seq.find_item(id).unwrap().1.clone();
+        let (start, dur, _) = out.get(&id).copied().unwrap_or((original.start, original.duration, None));
+        let it = edited.get(&id).cloned().unwrap_or(original);
+        let l = layout();
+        let body = Rect::from_min_max(pos2(l.x_of(start), 0.0), pos2(l.x_of(start + dur), 40.0));
+        (body, it)
+    }
+
+    /// The waveform's media-per-pixel scale must not change while a drag is previewed: the clip
+    /// body may move or resize, but the waveform keeps its pixels-per-second anchoring.
+    fn assert_waveform_anchored(what: &str, before: &(Rect, TrackItem), after: &(Rect, TrackItem)) {
+        let (a, b) = (media_ticks_per_pixel(&before.0, &before.1), media_ticks_per_pixel(&after.0, &after.1));
+        let drift = ((b / a) - 1.0).abs();
+        assert!(drift < 0.01, "{what}: waveform compressed during drag: {a} -> {b} media ticks per pixel");
+    }
+
+    fn demo_music() -> (FilmcraftApp, Sequence, TrackItem) {
+        let mut s = filmcraft_engine::Session::default();
+        s.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let seq = s.active_sequence().unwrap().clone();
+        let music = seq.audio_tracks.iter().flat_map(|t| &t.items).find(|i| i.name.contains("Ambient")).unwrap().clone();
+        (FilmcraftApp::new(s), seq, music)
+    }
+
+    #[test]
+    fn remix_drag_keeps_the_waveform_anchored() {
+        // #1424: dragging a music clip's Out edge with the Remix tool must show the same media at
+        // the same pixels while dragging as after the remix commits, not squeeze the whole
+        // waveform into the new, shorter width.
+        let (mut app, seq, music) = demo_music();
+        let before = shown(&app, &seq, music.id);
+        app.tl.drag = Some(Drag::Remix { clip: music.id, delta: Tick(-8 * filmcraft_time::TICKS_PER_SECOND), from: Tick::ZERO });
+        let after = shown(&app, &seq, music.id);
+        assert!(after.0.width() < before.0.width(), "the preview shortens the clip");
+        assert_waveform_anchored("remix", &before, &after);
+    }
+}
+
 #[cfg(test)]
 mod reveal_tests {
     use super::scroll_to_reveal;
@@ -1082,6 +1224,8 @@ mod new_track_tests {
             pps: 100.0,
             scroll: 0.0,
             split_y: 200.0,
+            v_scroll: 0.0,
+            a_scroll: 0.0,
         };
         let at = |y| new_track_at(&seq, &layout, y, 50.0, 50.0);
         assert_eq!(at(40.0), Some((TrackKind::Video, Rect::from_min_max(pos2(0.0, 100.0), pos2(800.0, 150.0)))));
@@ -1113,6 +1257,8 @@ mod new_track_tests {
             pps: 100.0,
             scroll: 0.0,
             split_y: 200.0,
+            v_scroll: 0.0,
+            a_scroll: 0.0,
         };
         assert_eq!(layout.row_at(195.0).map(|r| r.track), Some(seq.video_tracks[0].id), "V1 where it shows");
         assert!(layout.row_at(202.0).is_none(), "the divider is no track");
@@ -1150,6 +1296,8 @@ mod new_track_tests {
             pps: 100.0,
             scroll: 0.0,
             split_y: 150.0,
+            v_scroll: 0.0,
+            a_scroll: 0.0,
         };
         assert_eq!(new_track_at(&seq, &layout, 10.0, 50.0, 50.0), Some((TrackKind::Video, Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 50.0)))));
         // scrolled to the bottom, V1..V3 fill the area as before
@@ -1195,5 +1343,22 @@ mod ruler_tests {
         }
         let (minor, label) = ruler_steps(1.0, i64::MAX);
         assert!(minor >= 1 && label >= 1 && label % minor == 0, "an unrepresentable rate: tick {minor}, label {label}");
+    }
+}
+
+#[cfg(test)]
+mod waveform_zone_tests {
+    use super::waveform_zone_height;
+
+    #[test]
+    fn a_compact_clip_has_its_whole_height_for_the_waveform_and_a_tall_one_the_lower_part() {
+        // tall clips are as before
+        assert_eq!(waveform_zone_height(100.0), 42.0);
+        assert!((waveform_zone_height(60.0) - 25.2).abs() < 1e-4);
+        // compact ones fill the clip (a point of margin each side), where 42 % was 12 points of 28
+        assert_eq!(waveform_zone_height(28.0), 26.0);
+        assert_eq!(waveform_zone_height(49.0), 47.0);
+        // never smaller than the minimum
+        assert_eq!(waveform_zone_height(4.0), 8.0);
     }
 }
